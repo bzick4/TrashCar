@@ -382,11 +382,8 @@ namespace JunkRace
                 total += p.Mass;
                 com += transform.InverseTransformPoint(p.transform.position) * p.Mass;
                 drag += p.AirDrag;
-                switch (p.Slot)
-                {
-                    case SlotType.Engine: power += p.AsEnginePower; break;
-                    case SlotType.Steering: steer += p.AsSteering; break;
-                }
+                if (p.GivesPowerIn(p.Slot)) power += p.AsEnginePower;
+                if (p.Slot == SlotType.Steering) steer += p.AsSteering;
             }
             TotalPower = power;
             SteerQuality = Mathf.Clamp01(steer);

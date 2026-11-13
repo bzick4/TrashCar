@@ -147,6 +147,13 @@ namespace JunkRace
         /// <summary>Мощность, Вт, если деталь стоит в слоте мотора.</summary>
         public virtual float AsEnginePower => 0f;
 
+        /// <summary>
+        /// Даёт ли мощность в этом слоте. Любая деталь — в слоте мотора; настоящий мотор — где угодно
+        /// на машине (кузов, сиденье), кроме слотов колеса и руля: там он работает как колесо/руль.
+        /// </summary>
+        public bool GivesPowerIn(SlotType slot) =>
+            slot == SlotType.Engine || (NativeSlot == SlotType.Engine && slot != SlotType.Wheel && slot != SlotType.Steering);
+
         // Параметры «как колесо». У хлама плохие: мало сцепления и тяги, скребёт по земле.
         float junkRadius = 0.3f;
         public virtual float AsWheelRadius => junkRadius;

@@ -43,6 +43,9 @@ namespace JunkRace
         }
 
         float topY;
+
+        /// <summary>Где рисовать подпись над кучей.</summary>
+        public Vector3 LabelPosition => new Vector3(transform.position.x, topY + 0.6f, transform.position.z);
         readonly List<Part> candidates = new List<Part>();
 
         /// <summary>Куда убираем спрятанные детали: глубоко под кучу, чтобы никто их не задел.</summary>

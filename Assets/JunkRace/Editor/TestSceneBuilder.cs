@@ -52,6 +52,7 @@ namespace JunkRace.EditorTools
             new GameObject("InGameMenu").AddComponent<InGameMenu>();
             new GameObject("JunkNet").AddComponent<JunkNet>();   // в соло сам выключится
             BuildJunkyard();
+            LookBuilder.ApplyEnvironment(Camera.main);
 
             EditorSceneManager.SaveScene(scene, TrackPath);
         }
@@ -459,8 +460,7 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cube, "Борт_П", t, new Vector3(0.92f, 0.2f, 0f), new Vector3(0.16f, 0.5f, 3f), white);
             Prim(PrimitiveType.Cube, "Борт_Пер", t, new Vector3(0f, 0.2f, 1.42f), new Vector3(2f, 0.5f, 0.16f), white);
             Prim(PrimitiveType.Cube, "Борт_Зад", t, new Vector3(0f, 0.2f, -1.42f), new Vector3(2f, 0.5f, 0.16f), white);
-            AddHullPoints(t, 2f, 3f, floorY: 0f, topY: 0.5f);
-            MakeVehicle(p, new Vector3(0f, 0.9f, -0.3f));
+            MakeVehicle(p, AddHullPoints(t, 2f, 3f, floorY: 0f, topY: 0.5f));
         }
 
         static void MakePallet(Transform parent, Vector3 pos)
@@ -471,8 +471,7 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cube, "Основа", t, new Vector3(0f, -0.1f, 0f), new Vector3(1.6f, 0.2f, 2.4f), wood);
             for (int i = -1; i <= 1; i++)
                 Prim(PrimitiveType.Cube, "Доска", t, new Vector3(i * 0.6f, 0.05f, 0f), new Vector3(0.3f, 0.1f, 2.4f), wood * 0.9f);
-            AddHullPoints(t, 1.6f, 2.4f, floorY: 0.1f, topY: 0.5f);
-            MakeVehicle(p, new Vector3(0f, 1.1f, -0.3f));
+            MakeVehicle(p, AddHullPoints(t, 1.6f, 2.4f, floorY: 0.1f, topY: 0.5f));
         }
 
         /// <summary>Магазинная тележка: уже с колёсиками (прикручены прямо в сцене), но хлипкая.</summary>
@@ -499,8 +498,7 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cube, "Ручка", t, new Vector3(0f, h + 0.1f, -l / 2f - 0.15f), new Vector3(w, 0.04f, 0.04f), new Color(0.9f, 0.15f, 0.1f));
             Prim(PrimitiveType.Cube, "Рама", t, new Vector3(0f, -0.2f, 0f), new Vector3(w * 0.9f, 0.04f, l * 0.9f), wire * 0.7f);
 
-            AddHullPoints(t, w, l, floorY: 0f, topY: h, wheelY: -0.3f, wheelsUnder: true, wheelPairs: 2, engines: 1, driverZ: -0.15f);
-            MakeVehicle(p, new Vector3(0f, 0.9f, -0.15f));
+            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: h, wheelY: -0.3f, wheelsUnder: true, wheelPairs: 2, engines: 1));
 
             // Колёсики уже стоят: прикручиваем их прямо в сцене, машина зарегистрирует их на старте.
             foreach (var slot in new[] { "AP_Колесо_ПЛ", "AP_Колесо_ПП", "AP_Колесо_ЗЛ", "AP_Колесо_ЗП" })
@@ -524,8 +522,7 @@ namespace JunkRace.EditorTools
                 for (int sz = -1; sz <= 1; sz += 2)
                     Prim(PrimitiveType.Cube, "Ножка", t, new Vector3(sx * (w / 2f - 0.08f), legH / 2f, sz * (l / 2f - 0.08f)),
                          new Vector3(0.08f, legH, 0.08f), wood * 0.85f);
-            AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f);
-            MakeVehicle(p, new Vector3(0f, 0.95f, -0.3f));
+            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f));
         }
 
         /// <summary>Шкаф, лежащий на спине. Едешь на дверцах, как на крыше.</summary>
@@ -541,8 +538,7 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cube, "Щель_дверей", t, new Vector3(0f, 0.002f, 0f), new Vector3(0.02f, 0.01f, l * 0.95f), wood * 0.4f, false);
             Prim(PrimitiveType.Cube, "Ручка_Л", t, new Vector3(-0.07f, 0.03f, 0.2f), new Vector3(0.04f, 0.05f, 0.15f), new Color(0.8f, 0.7f, 0.3f), false);
             Prim(PrimitiveType.Cube, "Ручка_П", t, new Vector3(0.07f, 0.03f, 0.2f), new Vector3(0.04f, 0.05f, 0.15f), new Color(0.8f, 0.7f, 0.3f), false);
-            AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f, wheelY: -h / 2f);
-            MakeVehicle(p, new Vector3(0f, 1.0f, -0.3f));
+            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f, wheelY: -h / 2f));
         }
 
         /// <summary>
@@ -550,10 +546,19 @@ namespace JunkRace.EditorTools
         /// floorY — высота «пола», где стоят руль и моторы; topY — высота верхних точек кузова.
         /// wheelsUnder — колёса под корпусом (тележка), иначе — по бокам снаружи.
         /// </summary>
-        static void AddHullPoints(Transform hull, float width, float length, float floorY, float topY,
-                                  float wheelY = 0f, bool wheelsUnder = false, int wheelPairs = 3, int engines = 2,
-                                  float driverZ = -0.3f)
+        /// <returns>Место водителя (центр капсулы игрока) — для MakeVehicle.</returns>
+        static Vector3 AddHullPoints(Transform hull, float width, float length, float floorY, float topY,
+                                     float wheelY = 0f, bool wheelsUnder = false, int wheelPairs = 3, int engines = 2)
         {
+            // Салон. Широкий корпус — как обычная машина: водитель слева впереди, руль перед ним,
+            // справа пассажир, сзади ещё двое. Узкий (шкаф, тележка) — водитель по центру, рядом никто не влезет.
+            bool wide = width >= 1.4f;
+            float innerX = Mathf.Min(width / 2f - 0.3f, 0.6f);
+            float driverX = wide ? -innerX : 0f;
+            float driverZ = wide ? 0.3f : -Mathf.Min(0.3f, length * 0.15f);
+            float rearZ = driverZ - 0.6f;
+            float steeringZ = Mathf.Min(driverZ + 0.6f, length / 2f - 0.15f);
+
             float x = wheelsUnder ? width / 2f - 0.05f : width / 2f + 0.25f;
             float z = wheelsUnder ? length / 2f - 0.08f : length / 2f - 0.35f;
 
@@ -568,8 +573,8 @@ namespace JunkRace.EditorTools
             Point(hull, "Колесо_ЗЛ", new Vector3(-x, wheelY, -z), SlotType.Wheel);
             Point(hull, "Колесо_ЗП", new Vector3(x, wheelY, -z), SlotType.Wheel);
 
-            // Руль — перед сиденьем (сиденье примерно на z = -0.3).
-            Point(hull, "Руль", new Vector3(0f, floorY + 0.1f, Mathf.Min(0.6f, length / 2f - 0.15f)), SlotType.Steering);
+            // Руль — прямо перед водителем.
+            Point(hull, "Руль", new Vector3(driverX, floorY + 0.1f, steeringZ), SlotType.Steering);
 
             // Моторы в самом хвосте — чтобы не залезали в кресла салона.
             float engineZ = -length / 2f + Mathf.Min(0.4f, length * 0.25f);
@@ -589,17 +594,12 @@ namespace JunkRace.EditorTools
             Point(hull, "Верх_Право", new Vector3(sideX, topY, 0f));
             Point(hull, "Багажник", new Vector3(0f, floorY + 0.2f, -length / 2f - 0.3f));   // сзади снаружи, смотрит вперёд
 
-            // Салон: кресла внутри корпуса, на полу рядом с водителем (он на z = driverZ, по центру).
-            // Передняя пара — по бокам от руля, задняя — по бокам от водителя. Только если корпус
-            // достаточно широкий: в шкаф и тележку рядом с водителем никто не влезет.
-            if (width >= 1.4f)
+            // Кресла салона: справа от водителя и задний ряд (только в широком корпусе).
+            if (wide)
             {
-                float innerX = Mathf.Min(width / 2f - 0.3f, 0.6f);
-                float frontZ = Mathf.Min(0.6f, length / 2f - 0.15f) - 0.15f;
-                Point(hull, "Салон_ПЛ", new Vector3(-innerX, floorY, frontZ), SlotType.Seat);
-                Point(hull, "Салон_ПП", new Vector3(innerX, floorY, frontZ), SlotType.Seat);
-                Point(hull, "Салон_ЗЛ", new Vector3(-innerX, floorY, driverZ), SlotType.Seat);
-                Point(hull, "Салон_ЗП", new Vector3(innerX, floorY, driverZ), SlotType.Seat);
+                Point(hull, "Салон_ПП", new Vector3(innerX, floorY, driverZ), SlotType.Seat);
+                Point(hull, "Салон_ЗЛ", new Vector3(-innerX, floorY, rearZ), SlotType.Seat);
+                Point(hull, "Салон_ЗП", new Vector3(innerX, floorY, rearZ), SlotType.Seat);
             }
 
             // Подножки — дополнительные места снаружи, по бокам над передними и задними колёсами.
@@ -611,6 +611,8 @@ namespace JunkRace.EditorTools
             Point(hull, "Подножка_ПП", new Vector3(seatX, seatY, z), SlotType.Seat);
             Point(hull, "Подножка_ЗЛ", new Vector3(-seatX, seatY, -z), SlotType.Seat);
             Point(hull, "Подножка_ЗП", new Vector3(seatX, seatY, -z), SlotType.Seat);
+
+            return new Vector3(driverX, floorY + 0.9f, driverZ);   // игрок 1.7 м: центр капсулы на 0.85 над полом
         }
 
         /// <summary>Деталь, уже прикрученная в сцене: без своего Rigidbody, дочерняя к точке. Vehicle.Start её зарегистрирует.</summary>
@@ -875,9 +877,7 @@ namespace JunkRace.EditorTools
 
         static void Paint(GameObject go, Color color)
         {
-            var shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
-            go.GetComponent<Renderer>().sharedMaterial = new Material(shader) { color = color };
+            go.GetComponent<Renderer>().sharedMaterial = LookBuilder.MakeMaterial(color);
         }
 
         static void Set(Object target, string field, Object value)

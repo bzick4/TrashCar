@@ -28,7 +28,7 @@ namespace JunkRace
         void Update()
         {
             if (!shaker) return;
-            bool running = Vehicle != null && Slot == SlotType.Engine;
+            bool running = Vehicle != null && GivesPowerIn(Slot);
             float amount = running ? 0.01f + Mathf.Abs(Input.Throttle) * 0.04f : 0f;
             shaker.localPosition = shakerBase + Random.insideUnitSphere * amount;
         }

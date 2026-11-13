@@ -125,7 +125,8 @@ namespace JunkRace
 
         static void Paint(GameObject go, Color color)
         {
-            var shader = Shader.Find("Universal Render Pipeline/Lit");
+            var shader = Shader.Find("JunkRace/Toon");
+            if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
             if (shader == null) shader = Shader.Find("Standard");
             go.GetComponent<Renderer>().material = new Material(shader) { color = color };
         }

@@ -52,7 +52,8 @@ namespace JunkRace
                         power += p.AsEnginePower;
                         break;
                     default:
-                        if (p is ThrusterPart t && !t.UsesSpecialButton) thrust += t.Thrust;
+                        if (p.GivesPowerIn(slot)) power += p.AsEnginePower;
+                        else if (p is ThrusterPart t && !t.UsesSpecialButton) thrust += t.Thrust;
                         break;
                 }
             }

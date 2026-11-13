@@ -481,6 +481,7 @@ namespace JunkRace
         {
             if (player.InVehicle || InGameMenu.IsOpen) return;
             DrawPointLabels();
+            DrawPileLabels();
             DrawSearch();
 
             string hint = searchPile != null ? "E — бросить поиск"
@@ -520,6 +521,57 @@ namespace JunkRace
             {
                 centerStyle.normal.textColor = resultGood ? new Color(0.5f, 1f, 0.55f) : new Color(1f, 0.85f, 0.6f);
                 GUI.Label(new Rect(cx - 250f, y - 10f, 500f, 30f), resultText, centerStyle);
+            }
+            else if (LookPile != null && Held == null)
+            {
+                // Можно рыться — говорим прямо у прицела, а не только мелкой строкой внизу.
+                centerStyle.normal.textColor = new Color(1f, 0.85f, 0.35f);
+                GUI.Label(new Rect(cx - 200f, y - 10f, 400f, 30f), "E — порыться", centerStyle);
+            }
+        }
+
+        const float PileLabelDistance = 10f;
+
+        /// <summary>Подписи над кучами рядом: что это за куча и пустая ли. Та, в которой можно рыться, — ярче.</summary>
+        void DrawPileLabels()
+        {
+            if (Held != null || JunkPile.All.Count == 0) return;
+            if (cam == null) cam = Camera.main;
+            if (cam == null) return;
+            EnsureStyles();
+
+            foreach (var pile in JunkPile.All)
+            {
+                if (pile == null) continue;
+                Vector3 world = pile.LabelPosition;
+                float dist = Vector3.Distance(transform.position, world);
+                if (dist > PileLabelDistance) continue;
+                Vector3 s = cam.WorldToScreenPoint(world);
+                if (s.z <= 0f) continue;
+
+                bool active = pile == LookPile;
+                bool empty = pile.Remaining == 0;
+                string text = active ? $"[E] Порыться в «{pile.DisplayName}»"
+                    : empty ? $"{pile.DisplayName} (пусто)"
+                    : pile.InReach(transform.position) && player.FirstPersonView ? $"{pile.DisplayName} — наведи прицел"
+                    : pile.DisplayName;
+
+                // Дальние подписи бледнее.
+                float alpha = Mathf.Lerp(1f, 0.35f, Mathf.InverseLerp(3f, PileLabelDistance, dist));
+                Color color = active ? new Color(1f, 0.85f, 0.35f) : empty ? new Color(0.75f, 0.75f, 0.75f) : Color.white;
+                color.a = alpha;
+
+                var rect = new Rect(s.x - 160f, Screen.height - s.y - 14f, 320f, 28f);
+                labelStyle.fontStyle = active ? FontStyle.Bold : FontStyle.Normal;
+                shadowStyle.fontStyle = labelStyle.fontStyle;
+                var oldLabel = labelStyle.normal.textColor;
+                var oldShadow = shadowStyle.normal.textColor;
+                labelStyle.normal.textColor = color;
+                shadowStyle.normal.textColor = new Color(0f, 0f, 0f, 0.8f * alpha);
+                GUI.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text, shadowStyle);
+                GUI.Label(rect, text, labelStyle);
+                labelStyle.normal.textColor = oldLabel;
+                shadowStyle.normal.textColor = oldShadow;
             }
         }
 

@@ -177,7 +177,9 @@ namespace JunkRace
                     break;
                 }
                 default:
-                    if (part.WorksInBody) { color = Up; what = "работает"; }
+                    if (part.NativeSlot == SlotType.Engine && part.GivesPowerIn(slot))
+                    { color = Up; what = $"работает как мотор ({part.AsEnginePower / 735.5f:0.0} л.с.)"; }
+                    else if (part.WorksInBody) { color = Up; what = "работает"; }
                     else { color = Down; what = "здесь не работает, просто груз"; }
                     break;
             }
