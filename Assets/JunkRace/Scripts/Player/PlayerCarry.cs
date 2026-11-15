@@ -455,7 +455,7 @@ namespace JunkRace
 
             // Ровно как встанет деталь: localPosition = 0, localRotation = identity относительно точки.
             var pt = snapTarget.transform;
-            ghost.SetPositionAndRotation(pt.position, pt.rotation);
+            ghost.SetPositionAndRotation(pt.position, pt.rotation * Held.MountRotation(snapTarget));
             ghost.localScale = Vector3.Scale(pt.lossyScale, Held.transform.localScale);
             if (!ghost.gameObject.activeSelf) ghost.gameObject.SetActive(true);
         }

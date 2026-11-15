@@ -43,6 +43,9 @@ namespace JunkRace
             if (seat != null) baseSeat = seat.localPosition;
         }
 
+        static bool FollowsWheels(AttachPoint p) =>
+            p.Slot == SlotType.Wheel || p.Slot == SlotType.Side || p.name.StartsWith("AP_Подножка");
+
         /// <summary>Перевернуть (выполняется везде: на хосте и у клиентов по событию).</summary>
         public void ApplyFlipped(bool flipped)
         {
@@ -57,8 +60,9 @@ namespace JunkRace
             var points = part.Points;
             for (int i = 0; i < points.Length; i++)
             {
-                // Борта висят на боках корпуса: корпус переворачивается в том же объёме, им двигаться не нужно.
-                float shift = !flipped ? 0f : points[i].Slot == SlotType.Wheel ? wheelShift : points[i].Slot == SlotType.Side ? 0f : floorShift;
+                // Колёса, борта и подножки (они над колёсами) снаружи корпуса — едут вместе с колёсами:
+                // у стола ножками вниз борт опускается вдоль ножек, у ванны (wheelShift = 0) остаётся на месте.
+                float shift = !flipped ? 0f : FollowsWheels(points[i]) ? wheelShift : floorShift;
                 points[i].transform.localPosition = basePoints[i] + Vector3.up * shift;
             }
             if (seat != null) seat.localPosition = baseSeat + Vector3.up * (flipped ? floorShift : 0f);

@@ -182,7 +182,7 @@ namespace JunkRace
                 }
                 case MatchPhase.Build:
                     // Старт — когда все нажали «Готов» (G) или кончилось время. Просто сесть в машину — не старт.
-                    if (AllBuildReady() || Remaining <= 0f) EnterRaceLoading();
+                    if (AllBuildReady() || (Remaining <= 0f && !GameSession.IsDevRoom)) EnterRaceLoading();
                     break;
                 case MatchPhase.RaceLoading:
                 {
@@ -436,6 +436,14 @@ namespace JunkRace
         void DrawBuild(float w)
         {
             float t = Remaining;
+            if (GameSession.IsDevRoom)
+            {
+                GUI.Label(new Rect(0, 16, w, 40), "Тест-комната: без таймера", center);
+                GUI.Label(new Rect(0, 52, w, 30), "Все детали разложены рядами. Собери машину и нажми G — поехать на трассу", rowCenter);
+                string devProblem = CarProblem(World.LocalId);
+                if (devProblem != null) GUI.Label(new Rect(0, 84, w, 30), devProblem, warnCenter ??= MakeWarn());
+                return;
+            }
             GUI.Label(new Rect(0, 16, w, 40), $"Сборка: {(int)(t / 60)}:{(int)(t % 60):00}", center);
             ulong me = World.LocalId;
             bool meReady = buildReady.Contains(me);

@@ -227,7 +227,7 @@ namespace JunkRace
 
             part.transform.SetParent(point.transform, false);
             part.transform.localPosition = Vector3.zero;
-            part.transform.localRotation = Quaternion.identity;
+            part.transform.localRotation = part.MountRotation(point);
             part.SetCollidersEnabled(true);
             if (point.Slot != SlotType.Wheel) SettleOnHull(part, point);
             part.SetMountedPhysics(true);
@@ -253,6 +253,7 @@ namespace JunkRace
         {
             var owner = point.Owner;
             if (owner == null) return;
+            if (SettleOnModel(part, point, owner)) return;
             Physics.SyncTransforms();
 
             bool any = false;
@@ -280,6 +281,57 @@ namespace JunkRace
             if (best == float.MaxValue) return;
             float gap = best - toBottom;
             if (gap > 0.01f && gap <= maxGap) part.transform.position += down * gap;
+        }
+
+        /// <summary>
+        /// Прижать деталь к видимой модели корпуса: сначала вниз (стоит на корпусе), если под ней корпуса нет —
+        /// вбок, к корпусу (багажник, борта, подножки). Двигаем и вверх, если деталь утонула.
+        /// </summary>
+        bool SettleOnModel(Part part, AttachPoint point, Part owner)
+        {
+            var frame = point.transform;
+            var hullPts = HullShape.Points(owner, frame);
+            if (hullPts.Count == 0) return false;
+
+            bool any = false;
+            Bounds b = default;
+            foreach (var c in part.GetComponentsInChildren<Collider>())
+            {
+                if (!c.enabled || c.isTrigger || c.GetComponentInParent<Part>() != part) continue;
+                for (int i = 0; i < 8; i++)
+                {
+                    Vector3 w;
+                    if (c is BoxCollider box)
+                    {
+                        Vector3 k = new Vector3((i & 1) == 0 ? -0.5f : 0.5f, (i & 2) == 0 ? -0.5f : 0.5f, (i & 4) == 0 ? -0.5f : 0.5f);
+                        w = c.transform.TransformPoint(box.center + Vector3.Scale(box.size, k));
+                    }
+                    else
+                    {
+                        Bounds cb = c.bounds;
+                        w = cb.center + Vector3.Scale(cb.extents, new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1));
+                    }
+                    Vector3 l = frame.InverseTransformPoint(w);
+                    if (!any) { b = new Bounds(l, Vector3.zero); any = true; } else b.Encapsulate(l);
+                }
+            }
+            if (!any) return false;
+
+            const float maxGap = 0.6f, maxSink = 0.35f, clearance = 0.005f;
+            Vector3 axis = Vector3.down;
+            float gap = 0f;
+            // Боковина висит на борту нижним краем — её только придвигаем к корпусу, по высоте не трогаем.
+            bool side = point.Slot == SlotType.Side;
+            if (side || !HullShape.Gap(hullPts, b, axis, out gap) || gap > maxGap || gap < -maxSink)
+            {
+                // Под деталью корпуса нет — тянемся к нему вбок, по главной оси от детали к центру корпуса.
+                Vector3 to = frame.InverseTransformPoint(owner.transform.position) - b.center;
+                to.y = 0f;
+                axis = Mathf.Abs(to.x) >= Mathf.Abs(to.z) ? new Vector3(Mathf.Sign(to.x), 0f, 0f) : new Vector3(0f, 0f, Mathf.Sign(to.z));
+                if (!HullShape.Gap(hullPts, b, axis, out gap) || gap > maxGap || gap < -maxSink) return true;
+            }
+            part.transform.position += frame.TransformDirection(axis) * (gap - clearance);
+            return true;
         }
 
         /// <summary>Оторвать (только авторитет).</summary>

@@ -27,6 +27,7 @@ namespace JunkRace
         /// </summary>
         public static void Apply(int seed, Vector3 gate, int players)
         {
+            if (GameSession.IsDevRoom) { DevLayout(seed, gate); return; }
             // 1. Сколько деталей: сцена собрана на четверых, лишнее выключаем.
             foreach (var ps in Object.FindObjectsByType<PlayerScaled>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 ps.gameObject.SetActive(ps.MinPlayers <= players);
@@ -103,6 +104,108 @@ namespace JunkRace
                 }
             }
             Physics.SyncTransforms();
+        }
+
+        // ============================ Тест-комната ============================
+
+        const int DevCopies = 4;   // мелких деталей каждого вида: хватит, чтобы собрать машину
+
+        /// <summary>
+        /// Тест-комната: кучи и декорации — за забор, корпуса (по одному каждого вида) — двумя колоннами слева
+        /// от коридора старта, остальное — по видам столбиками справа и сзади, до DevCopies штук каждого.
+        /// </summary>
+        static void DevLayout(int seed, Vector3 gate)
+        {
+            foreach (var ps in Object.FindObjectsByType<PlayerScaled>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                ps.gameObject.SetActive(true);
+
+            obstacles.Clear();
+            var rng = new System.Random(seed ^ 0x51ED);
+            foreach (var pile in Sorted(Object.FindObjectsByType<JunkPile>(FindObjectsSortMode.None)))
+            {
+                Vector2 p = PickOutside(rng, PileRadius);
+                obstacles.Add((p, PileRadius));
+                pile.transform.position = new Vector3(gate.x + p.x, pile.transform.position.y, gate.z + p.y);
+                pile.ClearStash();
+            }
+            foreach (var prop in Sorted(Object.FindObjectsByType<YardProp>(FindObjectsSortMode.None)))
+            {
+                float r = Mathf.Max(0.3f, prop.Radius);
+                Vector2 p = PickOutside(rng, r);
+                obstacles.Add((p, r));
+                prop.transform.position = new Vector3(gate.x + p.x, prop.transform.position.y, gate.z + p.y);
+            }
+
+            // Виды деталей по порядку категорий, внутри — по имени.
+            var kinds = new SortedDictionary<string, List<Part>>(System.StringComparer.Ordinal);
+            foreach (var part in Sorted(Object.FindObjectsByType<Part>(FindObjectsSortMode.None)))
+            {
+                if (!IsLoose(part)) continue;
+                string key = (part.GetComponent<Vehicle>() != null ? 0 : 1 + (int)part.Category) + "|" + part.DisplayName;
+                if (!kinds.TryGetValue(key, out var list)) kinds[key] = list = new List<Part>();
+                list.Add(part);
+            }
+
+            // Корпуса: колонны x = -17 и -10.5, шаг 5 м вдоль z.
+            int hullSlot = 0;
+            // Мелочь: столбики шагом 2.2 м по x, внутри — 1.6 м по z. Справа от коридора, потом сзади (за местом появления).
+            int cellsPerKind = DevCopies;
+            var columns = new List<List<Vector2>>();
+            for (float x = 8.5f; x <= 20f; x += 2.2f)
+            {
+                var col = new List<Vector2>();
+                for (float z = -2f; z >= -21f; z -= 1.6f) col.Add(new Vector2(x, z));
+                columns.Add(col);
+            }
+            for (float x = -20f; x <= -5.5f; x += 2.2f)
+            {
+                var col = new List<Vector2>();
+                for (float z = -24f; z >= -39f; z -= 1.6f) col.Add(new Vector2(x, z));
+                columns.Add(col);
+            }
+            int colIndex = 0, rowIndex = 0;
+
+            foreach (var pair in kinds)
+            {
+                var list = pair.Value;
+                bool hull = list[0].GetComponent<Vehicle>() != null;
+                if (hull)
+                {
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (i > 0) { list[i].gameObject.SetActive(false); continue; }   // корпусов — по одному каждого вида
+                        var spot = new Vector2(hullSlot % 2 == 0 ? -17f : -10.5f, -3f - 5f * (hullSlot / 2));
+                        hullSlot++;
+                        Put(list[i], gate, spot);
+                    }
+                    continue;
+                }
+                int n = Mathf.Min(list.Count, cellsPerKind);
+                if (colIndex < columns.Count && rowIndex + n > columns[colIndex].Count) { colIndex++; rowIndex = 0; }
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (i >= n || colIndex >= columns.Count) { list[i].gameObject.SetActive(false); continue; }
+                    Put(list[i], gate, columns[colIndex][rowIndex + i]);
+                }
+                rowIndex += n + 1;   // пустая клетка между видами
+            }
+            Physics.SyncTransforms();
+            if (Object.FindFirstObjectByType<DevRoomLabels>() == null)
+                new GameObject("Тест-комната: подписи").AddComponent<DevRoomLabels>();
+        }
+
+        static void Put(Part part, Vector3 gate, Vector2 spot)
+        {
+            var pos = new Vector3(gate.x + spot.x, gate.y + 1.2f, gate.z + spot.y);
+            // Колёса кладём плашмя, иначе укатятся.
+            var rot = part is WheelPart ? Quaternion.Euler(0f, 0f, 90f) : Quaternion.identity;
+            part.transform.SetPositionAndRotation(pos, rot);
+            if (part.TryGetComponent(out Rigidbody rb))
+            {
+                rb.position = pos;
+                rb.rotation = rot;
+                if (!rb.isKinematic) { rb.linearVelocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
+            }
         }
 
         /// <summary>Свободно лежит на свалке: не прикручена (и не стоит в сцене на другой детали), не в руках.</summary>

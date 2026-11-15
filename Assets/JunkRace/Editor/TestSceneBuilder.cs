@@ -821,7 +821,16 @@ namespace JunkRace.EditorTools
         /// остаются невидимыми коллайдерами, так что физика корпуса не меняется.
         /// </summary>
         static void DressHull(Part hull, string file, Vector3 center, Vector3 size, Quaternion? preRotation = null, bool flat = false)
-            => DressPart(hull, BodyFolder, file, center, size, preRotation, flat);
+        {
+            // Детали и колёса прижимаются к вершинам модели корпуса (HullShape) — меш должен читаться в игре.
+            var model = ModelFitter.Find(BodyFolder, file);
+            if (model != null && AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(model)) is ModelImporter mi && !mi.isReadable)
+            {
+                mi.isReadable = true;
+                mi.SaveAndReimport();
+            }
+            DressPart(hull, BodyFolder, file, center, size, preRotation, flat);
+        }
 
         /// <summary>Модель из Assets/Prefab/Car/{folder}/{file} заменяет вид детали; примитивы остаются коллайдерами.</summary>
         static bool DressPart(Part part, string folder, string file, Vector3 center, Vector3 size, Quaternion? preRotation = null, bool flat = false)
@@ -895,8 +904,9 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cube, "Ручка_Л", t, new Vector3(-0.07f, 0.03f, 0.2f), new Vector3(0.04f, 0.05f, 0.15f), new Color(0.8f, 0.7f, 0.3f), false);
             Prim(PrimitiveType.Cube, "Ручка_П", t, new Vector3(0.07f, 0.03f, 0.2f), new Vector3(0.04f, 0.05f, 0.15f), new Color(0.8f, 0.7f, 0.3f), false);
             MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f, wheelY: -h / 2f));
-            // Модель шкафа стоит — кладём на спину (верх шкафа смотрит вперёд по машине).
-            DressHull(p, "wardrobe", new Vector3(0f, -h / 2f, 0f), new Vector3(w, h, l), Quaternion.Euler(-90f, 0f, 0f));
+            // Модель шкафа стоит, дверцами вбок (+X в Unity) — кладём на спину: высота шкафа вдоль машины,
+            // потом поворот вокруг длинной оси, чтобы дверцы смотрели вверх.
+            DressHull(p, "wardrobe", new Vector3(0f, -h / 2f, 0f), new Vector3(w, h, l), Quaternion.Euler(0f, 0f, 90f) * Quaternion.Euler(-90f, 0f, 0f));
             MakeFlippable(p, pivotY: -h / 2f, floorShift: 0f, wheelShift: 0f);
         }
 
@@ -1363,8 +1373,12 @@ namespace JunkRace.EditorTools
                     break;
                 }
             }
+            // Крепится нижним краем: точка борта — низ щита, сам он встаёт вверх вдоль корпуса.
+            Vector3 lift = new Vector3(0f, size.y / 2f, 0f);
+            foreach (Transform child in t) child.localPosition += lift;
+            p.GetComponent<BoxCollider>().center = lift;
             Set(p, "protection", protection);
-            DressPart(p, SideFolder, model, Vector3.zero, size);
+            DressPart(p, SideFolder, model, lift, size);
         }
 
         static void MakeUmbrella(Transform parent)

@@ -141,6 +141,9 @@ namespace JunkRace
         /// <summary>Родной слот: где деталь работает как задумано.</summary>
         public virtual SlotType NativeSlot => SlotType.Body;
 
+        /// <summary>Поворот детали относительно точки крепления (обычно — как точка).</summary>
+        public virtual Quaternion MountRotation(AttachPoint point) => Quaternion.identity;
+
         /// <summary>Работает ли деталь сама по себе в кузове (вентилятор толкает, зонт тормозит).</summary>
         public virtual bool WorksInBody => false;
 

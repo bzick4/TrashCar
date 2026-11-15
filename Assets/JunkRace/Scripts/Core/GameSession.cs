@@ -24,9 +24,31 @@ namespace JunkRace
             set { PlayerPrefs.SetString("jr_player_name", value); PlayerPrefs.Save(); }
         }
 
+        /// <summary>Тест-комната разработчика: все детали разложены рядами, сборка без таймера. Только соло.</summary>
+        public static bool DevRoom;
+
+        /// <summary>Сейчас тест-комната (в сетевой игре — никогда).</summary>
+        public static bool IsDevRoom
+        {
+            get
+            {
+                if (!DevRoom) return false;
+                var nm = NetworkManager.Singleton;
+                return nm == null || !nm.IsListening;
+            }
+        }
+
         public static void StartSolo()
         {
             Mode = GameMode.Solo;
+            DevRoom = false;
+            SceneManager.LoadScene(TrackScene);
+        }
+
+        public static void StartDevRoom()
+        {
+            Mode = GameMode.Solo;
+            DevRoom = true;
             SceneManager.LoadScene(TrackScene);
         }
 
@@ -59,6 +81,7 @@ namespace JunkRace
         public static void ReturnToMenu(string message = null)
         {
             PendingMessage = message;
+            DevRoom = false;
             Time.timeScale = 1f;
 
             var nm = NetworkManager.Singleton;

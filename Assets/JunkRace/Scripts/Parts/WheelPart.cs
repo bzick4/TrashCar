@@ -90,10 +90,40 @@ namespace JunkRace
             if (Mathf.Abs(side) < 0.01f) return Vector3.zero;
             // На этой стороне висит боковина — шина встаёт снаружи неё.
             float armor = Vehicle.HasSideArmor(side) ? SideArmorThickness : 0f;
-            float inset = MountOutset - halfWidth - BoardGap - armor;
-            if (inset <= 0f) return Vector3.zero;
+            float toHull = GapToHull(side);
+            float inset = (float.IsNaN(toHull) ? MountOutset - halfWidth : toHull) - BoardGap - armor;
+            // Без модели корпуса — только к борту; по модели можно и наружу (корпус шире коробок).
+            if (float.IsNaN(toHull) ? inset <= 0f : Mathf.Abs(inset) < 0.002f) return Vector3.zero;
             Vector3 inward = -Vehicle.transform.right * Mathf.Sign(side);
             return transform.InverseTransformDirection(inward) * inset;
+        }
+
+        AttachPoint gapPoint;
+        Vector3 gapPointPos;
+        float gapToHull = float.NaN;
+
+        /// <summary>
+        /// Зазор от внутренней грани шины до видимой модели корпуса (по вершинам), в полосе высоты и длины колеса.
+        /// NaN — модели нет, тогда считаем, что борт на MountOutset от точки. Пересчёт — только когда сменилась точка.
+        /// </summary>
+        float GapToHull(float side)
+        {
+            var point = MountedOn;
+            if (point == gapPoint && point != null && point.transform.localPosition == gapPointPos) return gapToHull;
+            gapPoint = point;
+            gapToHull = float.NaN;
+            if (point == null) return gapToHull;
+            gapPointPos = point.transform.localPosition;
+            var pts = HullShape.Points(point.Owner, transform);
+            if (pts.Count == 0) return gapToHull;
+            // Колесо в своих координатах: ось — X. Коробка шины, к корпусу — по X внутрь.
+            Vector3 inward = transform.InverseTransformDirection(-Vehicle.transform.right * Mathf.Sign(side));
+            Vector3 axis = Mathf.Abs(inward.x) >= Mathf.Abs(inward.z) ? new Vector3(Mathf.Sign(inward.x), 0f, 0f) : new Vector3(0f, 0f, Mathf.Sign(inward.z));
+            Vector3 size = new Vector3(radius * 2f, radius * 2f, radius * 2f);
+            if (axis.x != 0f) size.x = halfWidth * 2f; else size.z = halfWidth * 2f;
+            if (HullShape.Gap(pts, new Bounds(Vector3.zero, size), axis, out float gap, 0.8f) && gap > -0.3f && gap < 0.8f)
+                gapToHull = gap;
+            return gapToHull;
         }
 
         /// <summary>Полуширина шины вдоль оси колеса (локальная X детали), по мешам вида.</summary>

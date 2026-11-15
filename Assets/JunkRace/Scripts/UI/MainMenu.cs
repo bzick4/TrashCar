@@ -124,6 +124,9 @@ namespace JunkRace
 
             if (Button("Соло")) GameSession.StartSolo();
             GUILayout.Space(14);
+            if (Button("Тест-комната")) GameSession.StartDevRoom();
+            GUILayout.Label("все детали рядами, сборка без таймера", MenuStyles.Hint);
+            GUILayout.Space(14);
             if (Button("Кооп"))
             {
                 message = Session == null ? "В сцене нет NetworkManager с CoopSession. Пересобери сцены через меню JunkRace." : null;
