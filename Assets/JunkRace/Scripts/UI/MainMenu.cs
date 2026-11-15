@@ -207,8 +207,9 @@ namespace JunkRace
             serverName = GUILayout.TextField(serverName, 24, MenuStyles.Field);
             GUILayout.Space(16);
             GUILayout.Label("Пароль (необязательно)", MenuStyles.Text);
-            createPassword = GUILayout.PasswordField(createPassword, '*', 64, MenuStyles.Field);
-            GUILayout.Label($"Пусто — заходят все. Иначе минимум {CoopSession.MinPasswordLength} символов (требование Unity).", MenuStyles.Hint);
+            createPassword = PasswordRow(createPassword);
+            GUILayout.Space(6);
+            GUILayout.Label($"Пусто — заходят все. Иначе от {CoopSession.MinPasswordLength} символов.", MenuStyles.Hint);
             GUILayout.Space(30);
             GUILayout.Label($"Максимум игроков: {GameSession.CoopMaxPlayers}", MenuStyles.Hint);
 
@@ -233,13 +234,18 @@ namespace JunkRace
         {
             GUILayout.Label(joinTarget.Name, MenuStyles.Header);
             GUILayout.Label("Сервер с паролем", MenuStyles.Text);
-            joinPassword = GUILayout.PasswordField(joinPassword, '*', 64, MenuStyles.Field);
+            joinPassword = PasswordRow(joinPassword);
             GUILayout.FlexibleSpace();
             if (Button("Подключиться"))
             {
-                SaveName();
-                message = null;
-                Session.Join(playerName, joinTarget, joinPassword);
+                if (joinPassword.Length < CoopSession.MinPasswordLength)
+                    message = $"Пароль — от {CoopSession.MinPasswordLength} символов.";
+                else
+                {
+                    SaveName();
+                    message = null;
+                    Session.Join(playerName, joinTarget, joinPassword);
+                }
             }
             if (Button("Назад")) { message = null; screen = Screen.Browser; }
         }
@@ -250,7 +256,7 @@ namespace JunkRace
             GUILayout.Label("Код сервера (хост видит его в лобби)", MenuStyles.Text);
             joinCode = GUILayout.TextField(joinCode, 12, MenuStyles.Field);
             GUILayout.Label("Пароль (если есть)", MenuStyles.Text);
-            joinPassword = GUILayout.PasswordField(joinPassword, '*', 64, MenuStyles.Field);
+            joinPassword = PasswordRow(joinPassword);
 
             GUILayout.FlexibleSpace();
             if (Button("Подключиться"))
@@ -284,7 +290,12 @@ namespace JunkRace
             {
                 GUILayout.BeginHorizontal(MenuStyles.Row);
                 if (i < s.Players.Count)
+                {
                     GUILayout.Label((i == 0 ? "[хост]  " : "") + s.Players[i], MenuStyles.Text);
+                    GUILayout.FlexibleSpace();
+                    bool ready = i < s.PlayersReady.Count && s.PlayersReady[i];
+                    GUILayout.Label(ready ? "готов" : "не готов", ready ? MenuStyles.Ready : MenuStyles.Hint);
+                }
                 else
                     GUILayout.Label("— свободно —", MenuStyles.Hint);
                 GUILayout.EndHorizontal();
@@ -292,16 +303,15 @@ namespace JunkRace
 
             GUILayout.Space(20);
             if (s.CountdownLeft >= 0f)
-                GUILayout.Label($"Все в сборе! Старт через {Mathf.CeilToInt(s.CountdownLeft)}...", MenuStyles.Subtitle);
+                GUILayout.Label($"Все готовы! Старт через {Mathf.CeilToInt(s.CountdownLeft)}...", MenuStyles.Subtitle);
+            else if (s.AllReady)
+                GUILayout.Label("Все готовы, ждём подключения по сети...", MenuStyles.Subtitle);
             else
-                GUILayout.Label("Ждём игроков...", MenuStyles.Subtitle);
+                GUILayout.Label("Ждём, пока все нажмут «Готов»", MenuStyles.Subtitle);
 
             GUILayout.FlexibleSpace();
-            if (s.IsHost)
-            {
-                if (Button("Начать сейчас (тест)")) s.ForceStart();
-                GUILayout.Label("Пока можно стартовать и одному", MenuStyles.Hint);
-            }
+            if (Button(s.LocalReady ? "Не готов" : "Готов")) s.SetReady(!s.LocalReady);
+            GUILayout.Label("Старт — когда все в лобби нажмут «Готов». Можно и одному.", MenuStyles.Hint);
             if (Button("Выйти")) { s.Leave(); screen = Screen.Browser; lastRefresh = -100f; }
         }
 
@@ -317,12 +327,33 @@ namespace JunkRace
         void SaveName() => GameSession.PlayerName = playerName.Trim();
 
         static bool Button(string text) => GUILayout.Button(text, MenuStyles.Button);
+
+        bool showPassword;
+
+        /// <summary>
+        /// Поле пароля во всю ширину и кнопка «показать» рядом. Это обычное текстовое поле с прозрачным
+        /// текстом, а звёздочки рисуем поверх: у GUILayout.PasswordField при масштабе меню клик мимо поля.
+        /// </summary>
+        string PasswordRow(string value)
+        {
+            value ??= "";
+            GUILayout.BeginHorizontal();
+            value = GUILayout.TextField(value, CoopSession.MaxPasswordLength,
+                                        showPassword ? MenuStyles.Field : MenuStyles.HiddenField, GUILayout.ExpandWidth(true));
+            if (!showPassword && Event.current.type == EventType.Repaint && value.Length > 0)
+                MenuStyles.FieldMask.Draw(GUILayoutUtility.GetLastRect(), new GUIContent(new string('*', value.Length)), false, false, false, false);
+            GUILayout.Space(10);
+            if (GUILayout.Button(showPassword ? "скрыть" : "показать", MenuStyles.SmallButton, GUILayout.Width(150), GUILayout.Height(54)))
+                showPassword = !showPassword;
+            GUILayout.EndHorizontal();
+            return value;
+        }
     }
 
     /// <summary>Стили IMGUI-меню. Создаются один раз.</summary>
     static class MenuStyles
     {
-        public static GUIStyle Title, Subtitle, Header, Text, Hint, Error, Button, SmallButton, Field, Panel, Row, ListBox;
+        public static GUIStyle Title, Subtitle, Header, Text, Hint, Error, Ready, Button, SmallButton, Field, HiddenField, FieldMask, Panel, Row, ListBox;
         public static Texture2D BackgroundTex;
 
         public static void Ensure()
@@ -345,12 +376,21 @@ namespace JunkRace
             Text.normal.textColor = Color.white;
             Hint = new GUIStyle(GUI.skin.label) { fontSize = 21, wordWrap = true };
             Hint.normal.textColor = new Color(0.7f, 0.67f, 0.6f);
+            Ready = new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold };
+            Ready.normal.textColor = new Color(0.45f, 0.9f, 0.4f);
             Error = new GUIStyle(GUI.skin.label) { fontSize = 24, wordWrap = true };
             Error.normal.textColor = new Color(1f, 0.4f, 0.35f);
 
             Button = new GUIStyle(GUI.skin.button) { fontSize = 32, fixedHeight = 74, fontStyle = FontStyle.Bold };
             SmallButton = new GUIStyle(GUI.skin.button) { fontSize = 24, fixedHeight = 56 };
             Field = new GUIStyle(GUI.skin.textField) { fontSize = 28, fixedHeight = 54, padding = new RectOffset(12, 12, 10, 10) };
+            // Поле пароля: тот же вид, но текст невидим (поверх рисуем звёздочки стилем FieldMask).
+            HiddenField = new GUIStyle(Field);
+            var clear = new Color(0f, 0f, 0f, 0f);
+            HiddenField.normal.textColor = HiddenField.hover.textColor = HiddenField.focused.textColor = HiddenField.active.textColor = clear;
+            HiddenField.onNormal.textColor = HiddenField.onHover.textColor = HiddenField.onFocused.textColor = HiddenField.onActive.textColor = clear;
+            FieldMask = new GUIStyle(GUI.skin.label) { fontSize = 28, padding = Field.padding, alignment = Field.alignment, clipping = TextClipping.Clip };
+            FieldMask.normal.textColor = Field.normal.textColor;
 
             Panel = new GUIStyle(GUI.skin.box);
             Panel.normal.background = panelTex;

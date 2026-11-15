@@ -15,6 +15,7 @@ namespace JunkRace
         public bool CanDrive;       // есть чем ехать
         public bool CanSteer;       // есть чем рулить
         public bool Floats;         // не утонет
+        public float Protection;    // 0..ArmorPart.MaxProtection, от бортов
     }
 
     /// <summary>
@@ -28,7 +29,7 @@ namespace JunkRace
 
         public static VehicleEstimate Estimate(IEnumerable<(Part part, SlotType slot)> mounts)
         {
-            float mass = 0f, power = 0f, thrust = 0f, drag = 0f, traction = 0f, rolling = 0f, buoyancy = 0f, steer = 0f;
+            float mass = 0f, power = 0f, thrust = 0f, drag = 0f, traction = 0f, rolling = 0f, buoyancy = 0f, steer = 0f, protection = 0f;
             int wheels = 0;
 
             foreach (var (p, slot) in mounts)
@@ -38,6 +39,7 @@ namespace JunkRace
                 mass += p.Mass;
                 drag += p.AirDrag;
                 buoyancy += p.Buoyancy;
+                protection += ArmorPart.ProtectionOf(p, slot);
                 switch (slot)
                 {
                     case SlotType.Wheel:
@@ -72,6 +74,7 @@ namespace JunkRace
                 CanSteer = steerQuality > 0f,
                 Floats = buoyancy > mass * Physics.gravity.magnitude,
                 CanDrive = Drive(1f) > 0f,
+                Protection = Mathf.Clamp(protection, 0f, ArmorPart.MaxProtection),
             };
 
             if (est.CanDrive && mass > 0f)

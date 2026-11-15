@@ -40,18 +40,34 @@ namespace JunkRace.EditorTools
             BuildTrackScene();
         }
 
+        /// <summary>Старая тестовая трасса (три полосы, река, мост) — вместо генерации, для проверки машин.</summary>
+        [MenuItem("JunkRace/Пересобрать трассу: старая тестовая (река, мост)")]
+        public static void BuildOldTestTrack()
+        {
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            useOldTestTrack = true;
+            try { BuildTrackScene(); }
+            finally { useOldTestTrack = false; }
+        }
+
+        static bool useOldTestTrack;
+
         static void BuildTrackScene()
         {
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
             Random.InitState(42);
+            LookBuilder.ResetMaterialCache();
 
-            BuildTrack();
+            if (useOldTestTrack) BuildTrack();
+            else BuildYardAndRoute();
             var player = BuildPlayer(new Vector3(0f, 1.2f, -32f));
             SetupCamera(player);
             new GameObject("RaceTimer").AddComponent<RaceTimer>();
             new GameObject("InGameMenu").AddComponent<InGameMenu>();
             new GameObject("JunkNet").AddComponent<JunkNet>();   // в соло сам выключится
             BuildJunkyard();
+            BuildYardProps();
+            PartDefinitions.BindAll();   // характеристики деталей — в ассеты Data/Parts (существующие главнее)
             LookBuilder.ApplyEnvironment(Camera.main);
 
             EditorSceneManager.SaveScene(scene, TrackPath);
@@ -180,6 +196,85 @@ namespace JunkRace.EditorTools
             finish.AddComponent<FinishLine>();
         }
 
+        /// <summary>
+        /// Свалка (z от -40 до 0) с ограждением с трёх сторон; спереди открыт выезд,
+        /// а дальше — трасса, которую при запуске строит RouteGenerator (каждый раз новую).
+        /// </summary>
+        static void BuildYardAndRoute()
+        {
+            var yard = new GameObject("Свалка_площадка").transform;
+            Slab("Земля_свалки", yard, TrackStart, 0f, new Color(0.45f, 0.42f, 0.38f));
+            float half = TrackWidth / 2f;
+            const float segment = 5f;
+            for (int s = -1; s <= 1; s += 2)
+            {
+                int i = 0;
+                for (float z = TrackStart; z < 0f; z += segment, i++)
+                    Box("Ограждение", yard, new Vector3(s * (half + 0.15f), 0.4f, z + segment / 2f), new Vector3(0.3f, 0.8f, segment),
+                        i % 2 == 0 ? new Color(0.85f, 0.15f, 0.1f) : Color.white);
+            }
+            Box("Ограждение_зад", yard, new Vector3(0f, 0.4f, TrackStart - 0.15f), new Vector3(TrackWidth + 0.6f, 0.8f, 0.3f), new Color(0.85f, 0.15f, 0.1f));
+            // Сужение к выезду: трасса начинается шириной 14 м.
+            for (int s = -1; s <= 1; s += 2)
+                Box("Ограждение_выезд", yard, new Vector3(s * (7f + (half - 7f) / 2f), 0.4f, -0.15f), new Vector3(half - 7f, 0.8f, 0.3f), new Color(0.85f, 0.15f, 0.1f));
+
+            var gen = new GameObject("Генератор трассы").AddComponent<RouteGenerator>();
+            gen.transform.position = Vector3.zero;
+            Set(gen, "template", LookBuilder.MakeMaterial(Color.white));
+            BuildRouteModels(gen);
+        }
+
+        const string RouteModelsFolder = "Assets/Prefab/Route";
+
+        /// <summary>
+        /// Образцы моделей для трассы из Assets/Prefab/Route/{Tree,Pine,Rock,Mountain,Log}: подогнаны под единичный
+        /// размер и спрятаны под генератором. При запуске генератор клонирует их вместо примитивов.
+        /// Новую модель достаточно положить в нужную папку и пересобрать сцену.
+        /// </summary>
+        static void BuildRouteModels(RouteGenerator gen)
+        {
+            var box = new GameObject("Образцы моделей").transform;
+            box.SetParent(gen.transform, false);
+            // Деревья: высота 1, низ на нуле (пропорции свои). Камни и бревно: вписаны в единичный куб.
+            SetObjects(gen, "treeModels", RouteTemplates(box, "Tree", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true));
+            SetObjects(gen, "pineModels", RouteTemplates(box, "Pine", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true));
+            SetObjects(gen, "rockModels", RouteTemplates(box, "Rock", Vector3.zero, Vector3.one, false));
+            // Горы на горизонте (со снежными шапками): вписаны в единичный куб, как и сферы-заглушки.
+            SetObjects(gen, "mountainModels", RouteTemplates(box, "Mountain", Vector3.zero, Vector3.one, false));
+            // Бревно — длинной стороной по X (поперёк дороги).
+            SetObjects(gen, "logModels", RouteTemplates(box, "Log", Vector3.zero, new Vector3(1f, 0.999f, 0.999f), false));
+        }
+
+        static List<GameObject> RouteTemplates(Transform box, string folder, Vector3 center, Vector3 size, bool keepProportions)
+        {
+            var result = new List<GameObject>();
+            foreach (var model in ModelFitter.FindAll(RouteModelsFolder + "/" + folder))
+            {
+                // Статическое объединение мешей при запуске требует, чтобы меш был доступен для чтения.
+                string path = AssetDatabase.GetAssetPath(model);
+                if (AssetImporter.GetAtPath(path) is ModelImporter mi && !mi.isReadable)
+                {
+                    mi.isReadable = true;
+                    mi.SaveAndReimport();
+                }
+                var t = new GameObject(folder + "_" + model.name);
+                t.transform.SetParent(box, false);
+                ModelFitter.Attach(model, t.transform, center, size, keepProportions);
+                t.SetActive(false);
+                result.Add(t);
+            }
+            return result;
+        }
+
+        static void SetObjects(Object target, string field, List<GameObject> items)
+        {
+            var so = new SerializedObject(target);
+            var prop = so.FindProperty(field);
+            prop.arraySize = items.Count;
+            for (int i = 0; i < items.Count; i++) prop.GetArrayElementAtIndex(i).objectReferenceValue = items[i];
+            so.ApplyModifiedPropertiesWithoutUndo();
+        }
+
         /// <summary>Плита земли от z0 до z1 толщиной 4 м (верх на y = 0).</summary>
         static void Slab(string name, Transform parent, float z0, float z1, Color color) =>
             Box(name, parent, new Vector3(0f, -2f, (z0 + z1) / 2f), new Vector3(TrackWidth, 4f, z1 - z0), color);
@@ -248,45 +343,160 @@ namespace JunkRace.EditorTools
         {
             var yard = new GameObject("Junkyard").transform;
 
-            // Корпуса
-            MakeBathtub(yard, new Vector3(-5f, 1f, -15f));
-            MakePallet(yard, new Vector3(6f, 1f, -15f));
-            MakeCart(yard, new Vector3(-10f, 1f, -7f));
-            MakeTable(yard, new Vector3(10f, 1f, -7f));
-            MakeWardrobe(yard, new Vector3(0f, 1f, -24f));
+            // Сколько чего на свалке при 1, 2, 3, 4 игроках. Сцена собирается на четверых,
+            // при запуске лишнее выключается (PlayerScaled + YardShuffle). Один игрок: все корпуса,
+            // все моторы, 10 колёс, 2 руля, 1 кресло. Каждый следующий — ещё на машину и запчасти.
 
-            // Колёса
+            // Корпуса (8, 8, 10, 12)
+            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeBathtub(yard, RandomYardPos()));
+            Scaled(yard, new[] { 1, 1, 1, 2 }, () => MakePallet(yard, RandomYardPos()));
+            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeTable(yard, RandomYardPos()));
+            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeWardrobe(yard, RandomYardPos()));
+            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeSofa(yard, RandomYardPos()));
+            Scaled(yard, new[] { 1, 1, 1, 2 }, () => MakeFlamingo(yard, RandomYardPos()));
+            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeDoor(yard, RandomYardPos()));
+            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeSurfboard(yard, RandomYardPos()));
+
+            // Колёса (12, 15, 21, 26)
             Color rubber = new Color(0.15f, 0.15f, 0.15f);
-            for (int i = 0; i < 4; i++)
-                MakeWheel(yard, "Колесо тележки", "Скрипит, но катится.", 6f, 0.4f, 450f, 400f, rubber);
-            for (int i = 0; i < 2; i++)
-                MakeWheel(yard, "Колесо квадроцикла", "Держит дорогу. Почти.", 11f, 0.45f, 900f, 750f, new Color(0.35f, 0.25f, 0.15f));
-            for (int i = 0; i < 2; i++)
+            Scaled(yard, new[] { 2, 3, 4, 5 }, () =>
+                MakeWheel(yard, "Колесо квадроцикла", "Держит дорогу. Почти.", 11f, 0.45f, 900f, 750f, new Color(0.35f, 0.25f, 0.15f), model: "quadro_wheel"));
+            Scaled(yard, new[] { 2, 2, 3, 4 }, () =>
+                MakeWheel(yard, "Колесо", "Обычное, от чего-то маленького. Скучное, зато катится и держит.", 7f, 0.38f, 650f, 600f, rubber, model: "wheel"));
+            Scaled(yard, new[] { 2, 2, 3, 4 }, () =>
                 MakeWheel(yard, "Люк", "Чугунный. Тяжёлый, цепкий и не отваливается никогда.", 40f, 0.35f, 650f, 900f,
-                          new Color(0.3f, 0.3f, 0.32f), WheelStyle.Manhole, thickness: 0.04f, breakImpulse: 3000f, rolling: 5f);
-            for (int i = 0; i < 4; i++)
+                          new Color(0.3f, 0.3f, 0.32f), WheelStyle.Manhole, thickness: 0.04f, breakImpulse: 3000f, rolling: 5f, model: "luk_wheel"));
+            Scaled(yard, new[] { 2, 3, 4, 4 }, () =>
                 MakeWheel(yard, "Велосипедное колесо", "Большое и лёгкое. Катится легко, держит плохо, отлетает от чиха.", 2f, 0.6f, 400f, 250f,
-                          rubber, WheelStyle.Bicycle, thickness: 0.025f, breakImpulse: 250f, rolling: 1.5f);
-            for (int i = 0; i < 4; i++)
+                          rubber, WheelStyle.Bicycle, thickness: 0.025f, breakImpulse: 250f, rolling: 1.5f, model: "bmx_wheel"));
+            Scaled(yard, new[] { 2, 3, 4, 5 }, () =>
                 MakeWheel(yard, "Спасательный круг", "В воде — лучшее колесо. На дороге мягкий и вязкий: нужен мотор помощнее.", 2f, 0.4f, 250f, 220f,
-                          new Color(1f, 0.45f, 0.1f), WheelStyle.Ring, thickness: 0.12f, rolling: 8f, buoyancy: 1500f, paddle: 1.6f);
+                          new Color(1f, 0.45f, 0.1f), WheelStyle.Ring, thickness: 0.12f, rolling: 8f, buoyancy: 1500f, paddle: 1.6f, model: "sos_wheel"));
+            Scaled(yard, new[] { 2, 2, 3, 4 }, () =>
+                MakeWheel(yard, "Иллюминатор", "Корабельный, латунный. Тяжёлый и крепкий, по воде гребёт — привык.", 18f, 0.35f, 750f, 700f,
+                          new Color(0.78f, 0.6f, 0.25f), WheelStyle.Porthole, thickness: 0.06f, breakImpulse: 1800f, rolling: 4f, paddle: 0.9f, model: "porthole"));
 
-            // Остальное
-            MakeEngine(yard, "Мотор газонокосилки", "Классика. Заводится с третьего рывка.", 15f, 4000f, 450f, new Color(0.85f, 0.15f, 0.1f), new Vector3(0.6f, 0.5f, 0.6f));
-            MakeEngine(yard, "Мотор от стиралки", "Тяжёлый и тихий. На отжиме неплох.", 32f, 3000f, 800f, Color.white, new Vector3(0.8f, 0.8f, 0.8f));
-            MakeEngine(yard, "Бензопила", "Злая, лёгкая и отваливается при каждом чихе.", 7f, 7500f, 220f, new Color(1f, 0.55f, 0f), new Vector3(0.3f, 0.35f, 0.9f));
-            MakeFan(yard);
-            MakeVacuum(yard);
-            MakeSteering(yard);
-            MakeUmbrella(yard);
-            MakeDuck(yard);
+            // Моторы и толкатели (5, 7, 9, 12)
+            Scaled(yard, new[] { 1, 2, 2, 3 }, () =>
+                MakeEngine(yard, "Мотор газонокосилки", "Классика. Заводится с третьего рывка.", 15f, 4000f, 450f, new Color(0.85f, 0.15f, 0.1f), new Vector3(0.6f, 0.5f, 0.6f), "lawn mower"));
+            Scaled(yard, new[] { 1, 1, 2, 2 }, () =>
+                MakeEngine(yard, "Мотор от стиралки", "Тяжёлый и тихий. На отжиме неплох.", 32f, 3000f, 800f, Color.white, new Vector3(0.8f, 0.8f, 0.8f), "washing machine"));
+            Scaled(yard, new[] { 0, 1, 1, 2 }, () =>
+                MakeEngine(yard, "Электромотор", "Тяговый, от погрузчика. Тяжёлый, но тянет ровно и мощно.", 26f, 5500f, 900f, new Color(0.15f, 0.4f, 0.4f), new Vector3(0.55f, 0.45f, 0.5f), "motor"));
+            Scaled(yard, new[] { 1, 2, 2, 3 }, () =>
+                MakeEngine(yard, "Бензопила", "Злая, лёгкая и отваливается при каждом чихе.", 7f, 7500f, 220f, new Color(1f, 0.55f, 0f), new Vector3(0.3f, 0.35f, 0.9f), "chainsaw"));
+            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeFan(yard));
+            Scaled(yard, new[] { 1, 1, 1, 2 }, () => MakeVacuum(yard));
 
-            // Кресла для пассажиров
-            for (int i = 0; i < 2; i++) MakeSeat(yard, SeatStyle.Office);
-            for (int i = 0; i < 2; i++) MakeSeat(yard, SeatStyle.Car);
-            MakeSeat(yard, SeatStyle.Toilet);
+            // Рули (2, 4, 5, 6) — первый (обычный) лежит у старта.
+            Scaled(yard, new[] { 1, 2, 2, 3 }, () => MakeSteering(yard, SteerStyle.Wheel));
+            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeSteering(yard, SteerStyle.Handlebar));
+            Scaled(yard, new[] { 0, 1, 1, 1 }, () => MakeSteering(yard, SteerStyle.Laptop));
+
+            // Борта (4, 7, 10, 14): защищают машину от разваливания, но тяжёлые.
+            Scaled(yard, new[] { 2, 3, 4, 6 }, () => MakeArmor(yard, ArmorStyle.CarDoor));
+            Scaled(yard, new[] { 1, 2, 3, 4 }, () => MakeArmor(yard, ArmorStyle.WindowFrame));
+            Scaled(yard, new[] { 1, 2, 3, 4 }, () => MakeArmor(yard, ArmorStyle.Slate));
+
+            // Мелочь
+            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeUmbrella(yard));
+            Scaled(yard, new[] { 1, 1, 1, 2 }, () => MakeDuck(yard));
+
+            // Кресла (1, 3, 5, 6) — первое (офисное) лежит у старта.
+            Scaled(yard, new[] { 1, 2, 2, 3 }, () => MakeSeat(yard, SeatStyle.Office));
+            Scaled(yard, new[] { 0, 1, 2, 2 }, () => MakeSeat(yard, SeatStyle.Car));
+            Scaled(yard, new[] { 0, 0, 1, 1 }, () => MakeSeat(yard, SeatStyle.Toilet));
 
             DistributeIntoPiles(yard, BuildPiles());
+        }
+
+        /// <summary>
+        /// Сделать counts[3] штук (на четверых); копия номер i есть с того числа игроков,
+        /// при котором counts[игроки - 1] > i (PlayerScaled).
+        /// </summary>
+        static void Scaled(Transform yard, int[] counts, System.Action make)
+        {
+            for (int i = 0; i < counts[3]; i++)
+            {
+                int before = yard.childCount;
+                make();
+                int min = 1;
+                while (min < 4 && counts[min - 1] <= i) min++;
+                for (int c = before; c < yard.childCount; c++)
+                {
+                    var child = yard.GetChild(c);
+                    var ps = child.GetComponent<PlayerScaled>() ?? child.gameObject.AddComponent<PlayerScaled>();
+                    ps.MinPlayers = min;
+                }
+            }
+        }
+
+        // ---------------- Декорации свалки ----------------
+
+        const string PropsFolder = "Assets/Prefab/other";
+
+        /// <summary>Модели из Assets/Prefab/other и сколько штук каждой. Нет в списке — по одной.</summary>
+        static readonly Dictionary<string, int> PropCounts = new Dictionary<string, int>
+        {
+            { "Block", 3 }, { "Reel", 3 }, { "TV02", 3 },
+            { "Car0", 2 }, { "Car1", 2 }, { "GasPump", 2 }, { "Electric03", 2 },
+            { "Bus", 1 }, { "Tank", 1 }, { "Windmill", 1 },
+        };
+
+        /// <summary>
+        /// Декорации на свалку: вид в нашем стиле, коробка-коллайдер по габаритам. Где стоят — решается
+        /// при запуске (YardShuffle, по сиду): мелкие внутри, крупные (больше 3.5 м в радиусе или выше 5 м) — за забором.
+        /// </summary>
+        [MenuItem("JunkRace/Декорации свалки: поставить в открытой сцене")]
+        public static void BuildYardProps()
+        {
+            var old = GameObject.Find("Декорации_свалки");
+            if (old != null) Object.DestroyImmediate(old);
+            if (!AssetDatabase.IsValidFolder(PropsFolder)) return;
+            var root = new GameObject("Декорации_свалки").transform;
+            int n = 0;
+            foreach (var guid in AssetDatabase.FindAssets("t:Prefab", new[] { PropsFolder }))
+            {
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
+                if (prefab == null) continue;
+                int count = PropCounts.TryGetValue(prefab.name, out int c) ? c : 1;
+                for (int i = 0; i < count; i++, n++) MakeProp(prefab, root);
+            }
+            if (!Application.isPlaying) EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            Debug.Log($"JunkRace: декораций на свалке: {n}.");
+        }
+
+        static void MakeProp(GameObject prefab, Transform root)
+        {
+            var go = (GameObject)PrefabUtility.InstantiatePrefab(prefab, root);
+            go.name = prefab.name;
+            go.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            foreach (var c in go.GetComponentsInChildren<Collider>(true)) Object.DestroyImmediate(c);
+
+            var renderers = go.GetComponentsInChildren<Renderer>(true);
+            if (renderers.Length == 0) { Object.DestroyImmediate(go); return; }
+            foreach (var r in renderers)
+            {
+                var mats = r.sharedMaterials;
+                for (int i = 0; i < mats.Length; i++) mats[i] = LookBuilder.ConvertMaterial(mats[i]);
+                r.sharedMaterials = mats;
+            }
+
+            Bounds b = renderers[0].bounds;
+            foreach (var r in renderers) b.Encapsulate(r.bounds);
+            // Ставим на землю (низом на 0) и пока — в случайное место свалки (при запуске переставится).
+            Vector3 lift = Vector3.up * -b.min.y;
+            go.transform.position = lift;
+            Vector3 scale = go.transform.lossyScale;
+            var box = go.AddComponent<BoxCollider>();
+            box.center = new Vector3(b.center.x / scale.x, b.center.y / scale.y, b.center.z / scale.z);   // рамка мерилась с корнем в нуле
+            box.size = new Vector3(b.size.x / scale.x, b.size.y / scale.y, b.size.z / scale.z);
+            var p = RandomYardPos();
+            go.transform.position = new Vector3(p.x, lift.y, p.z);
+
+            var prop = go.AddComponent<YardProp>();
+            prop.Radius = Mathf.Max(b.extents.x, b.extents.z);
+            prop.Big = prop.Radius > 3.5f || b.size.y > 5f;
         }
 
         // ---------------- Кресла ----------------
@@ -346,6 +556,8 @@ namespace JunkRace.EditorTools
                 }
             }
             // Сидящий игрок: центр капсулы чуть выше сиденья (ноги «в кресле»).
+            string seatModel = style == SeatStyle.Office ? "office chair" : style == SeatStyle.Car ? "car chair" : "toilet";
+            DressPart(p, SeatFolder, seatModel, col.center, col.size);
             var sit = new GameObject("SitPoint").transform;
             sit.SetParent(t, false);
             sit.localPosition = new Vector3(0f, seatTop + 0.4f, 0f);
@@ -370,12 +582,123 @@ namespace JunkRace.EditorTools
             return list;
         }
 
+        const string TrashFolder = "Assets/Prefab/junky/Trash";
+        /// <summary>Насколько опустить модель кучи после постановки на землю, м.</summary>
+        const float PileSink = 0f;
+        /// <summary>Высота самой кучи (объекта «Куча_N») на сцене — подобрано на глаз.</summary>
+        const float PileRootY = -0.55f;
+        /// <summary>Размер модели кучи: поперечник и высота, м.</summary>
+        const float PileWidth = 7.6f, PileHeight = 3.2f;
+        /// <summary>С какого расстояния (от центра кучи) можно в ней рыться.</summary>
+        const float PileReach = PileWidth / 2f + 1.5f;
+
+        /// <summary>Опускает/поднимает модель так, чтобы её низ был на уровне owner (земля кучи).</summary>
+        static void SitOnGround(Transform model, Transform owner)
+        {
+            float minY = float.MaxValue;
+            foreach (var r in model.GetComponentsInChildren<Renderer>())
+                minY = Mathf.Min(minY, r.bounds.min.y);
+            if (minY < float.MaxValue) model.position += Vector3.up * (owner.position.y - minY);
+        }
+
+        /// <summary>Ставит в кучу модель из папки Trash. false — модели нет.</summary>
+        static int pileModelIndex;
+
+        /// <summary>
+        /// Подгонка тона моделей куч друг к другу: множитель цвета. Эталон — trash_Pile;
+        /// junky светлее и рыжее (средний цвет текстуры 0.46/0.38/0.33 против 0.39/0.36/0.32).
+        /// </summary>
+        static readonly Dictionary<string, Color> PileTints = new Dictionary<string, Color>
+        {
+            { "junky", new Color(0.85f, 0.93f, 0.99f) },
+        };
+
+        static readonly Dictionary<Material, Material> tintedMaterials = new Dictionary<Material, Material>();
+
+        static void TintPile(GameObject view, Color tint)
+        {
+            foreach (var r in view.GetComponentsInChildren<Renderer>(true))
+            {
+                var mats = r.sharedMaterials;
+                for (int i = 0; i < mats.Length; i++)
+                {
+                    var m = mats[i];
+                    if (m == null) continue;
+                    if (!tintedMaterials.TryGetValue(m, out var tinted) || tinted == null)
+                    {
+                        tinted = new Material(m) { name = m.name + " (тон)" };
+                        tinted.color = m.color * tint;
+                        tintedMaterials[m] = tinted;
+                    }
+                    mats[i] = tinted;
+                }
+                r.sharedMaterials = mats;
+            }
+        }
+
+        static bool DressPile(Transform t)
+        {
+            // Моделей куч может быть несколько — каждой куче случайная.
+            var models = ModelFitter.FindAll(TrashFolder);
+            if (models.Count == 0) return false;
+            // По очереди, а не случайно: моделей поровну (две модели — 50/50).
+            var model = models[pileModelIndex++ % models.Count];
+            var turn = new GameObject("Поворот").transform;
+            turn.SetParent(t, false);
+            turn.localRotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+            var view = ModelFitter.Attach(model, turn, new Vector3(0f, PileHeight / 2f, 0f),
+                                          new Vector3(PileWidth, PileHeight, PileWidth), keepProportions: true);
+            if (PileTints.TryGetValue(model.name, out var tint)) TintPile(view, tint);
+            ModelFitter.AddConvexColliders(view);
+            // keepProportions уменьшает по самой тесной оси — ставим низом на землю.
+            SitOnGround(view.transform, t);
+            view.transform.position += Vector3.up * PileSink;   // слегка утопить в землю: у модели снизу пустоты
+            return true;
+        }
+
+        /// <summary>Заменить вид всех куч в открытой сцене на модель — без полной пересборки.</summary>
+        [MenuItem("JunkRace/Кучи: поставить модель в открытой сцене")]
+        public static void DressPilesInOpenScene()
+        {
+            if (ModelFitter.FindFirst(TrashFolder) == null)
+            {
+                Debug.LogWarning($"JunkRace: в {TrashFolder} нет модели кучи.");
+                return;
+            }
+            LookBuilder.ResetMaterialCache();
+            int n = 0;
+            foreach (var pile in Object.FindObjectsByType<JunkPile>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                var t = pile.transform;
+                var p = t.position;
+                t.position = new Vector3(p.x, PileRootY, p.z);
+                // Детали из тайника лежат не внутри кучи, а на свалке — внутри только «декорации».
+                for (int i = t.childCount - 1; i >= 0; i--)
+                {
+                    var child = t.GetChild(i);
+                    if (child.GetComponentInChildren<Part>(true) != null) continue;
+                    Object.DestroyImmediate(child.gameObject);
+                }
+                if (DressPile(t)) { n++; Set(pile, "reach", PileReach); }
+            }
+            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            Debug.Log($"JunkRace: кучи заменены на модель: {n}. Сохрани сцену.");
+        }
+
         static JunkPile MakePile(Transform parent, string name, Vector3 pos)
         {
             var go = new GameObject(name);
             go.transform.SetParent(parent, false);
-            go.transform.position = pos;
+            go.transform.position = new Vector3(pos.x, PileRootY, pos.z);
             var t = go.transform;
+
+            // Есть модель в Assets/Prefab/junky/Trash — ставим её (каждую кучу повёрнутой по-своему).
+            if (DressPile(t))
+            {
+                var dressed = go.AddComponent<JunkPile>();
+                Set(dressed, "reach", PileReach);
+                return dressed;
+            }
 
             Color[] colors =
             {
@@ -422,30 +745,28 @@ namespace JunkRace.EditorTools
             foreach (Transform child in yard)
                 if (child.TryGetComponent(out Part part)) loose.Add(part);
 
+            // Для удобства тестов: руль и одно кресло сразу лежат у старта, рядом с игроком.
+            Part starterChair = null, starterSteering = null;
             foreach (var part in loose)
             {
-                bool hull = part.GetComponent<Vehicle>() != null;
-                if (hull && (part.DisplayName == "Ванна" || part.DisplayName == "Паллет")) continue;
-
-                int k = Random.Range(0, piles.Count);
-                Vector3 pilePos = piles[k].transform.position;
-                if (hull || Random.value < 0.5f)
+                if (part is SteeringPart && starterSteering == null)
                 {
-                    stashes[k].Add(part);
-                    part.transform.position = pilePos + Vector3.up * 0.5f;   // в редакторе видно, в какой куче
+                    starterSteering = part;
+                    part.transform.position = new Vector3(-1.5f, 1f, -29f);
                 }
-                else
+                else if (part is SeatPart && starterChair == null)
                 {
-                    float a = Random.Range(0f, Mathf.PI * 2f), d = Random.Range(2.6f, 4.5f);
-                    part.transform.position = pilePos + new Vector3(Mathf.Cos(a) * d, 1.2f, Mathf.Sin(a) * d);
+                    starterChair = part;
+                    part.transform.position = new Vector3(1.5f, 1f, -29f);
                 }
             }
 
-            for (int i = 0; i < piles.Count; i++) SetList(piles[i], "stash", stashes[i]);
+            // Что спрятано в кучах, а что лежит рядом — решается при запуске (YardShuffle): по сиду и числу игроков.
+            for (int i = 0; i < piles.Count; i++) SetList(piles[i], "stash", new List<Part>());
         }
 
         static Vector3 RandomYardPos() =>
-            new Vector3(Random.Range(-12f, 12f), 1.5f, Random.Range(-28f, -3f));
+            new Vector3(Random.Range(-12f, 12f), 1.5f, Random.Range(-24f, -3f));   // не у старта игроков (z < -26)
 
         // ---------------- Корпуса ----------------
         // Начало координат корпуса — его «пол» (там, где стоят руль и моторы), если не сказано иное.
@@ -455,12 +776,76 @@ namespace JunkRace.EditorTools
             var p = MakePart<Part>("Ванна", PartCategory.Hull, parent, pos, 60f, 99999f, 5000f, "Чугунная. Плавает, как ни странно.", 0.45f);
             Color white = new Color(0.95f, 0.95f, 0.97f);
             var t = p.transform;
-            Prim(PrimitiveType.Cube, "Дно", t, new Vector3(0f, -0.15f, 0f), new Vector3(2f, 0.3f, 3f), white);
-            Prim(PrimitiveType.Cube, "Борт_Л", t, new Vector3(-0.92f, 0.2f, 0f), new Vector3(0.16f, 0.5f, 3f), white);
-            Prim(PrimitiveType.Cube, "Борт_П", t, new Vector3(0.92f, 0.2f, 0f), new Vector3(0.16f, 0.5f, 3f), white);
-            Prim(PrimitiveType.Cube, "Борт_Пер", t, new Vector3(0f, 0.2f, 1.42f), new Vector3(2f, 0.5f, 0.16f), white);
-            Prim(PrimitiveType.Cube, "Борт_Зад", t, new Vector3(0f, 0.2f, -1.42f), new Vector3(2f, 0.5f, 0.16f), white);
-            MakeVehicle(p, AddHullPoints(t, 2f, 3f, floorY: 0f, topY: 0.5f));
+
+            // Габариты под модель bathtub: дно тонкое (~12% высоты), внутренний пол — на нуле.
+            // От низа дна (-0.1) до верха бортов (0.65).
+            Prim(PrimitiveType.Cube, "Дно", t, new Vector3(0f, -0.05f, 0f), new Vector3(2f, 0.1f, 3f), white);
+            Prim(PrimitiveType.Cube, "Борт_Л", t, new Vector3(-0.92f, 0.3f, 0f), new Vector3(0.16f, 0.7f, 3f), white);
+            Prim(PrimitiveType.Cube, "Борт_П", t, new Vector3(0.92f, 0.3f, 0f), new Vector3(0.16f, 0.7f, 3f), white);
+            Prim(PrimitiveType.Cube, "Борт_Пер", t, new Vector3(0f, 0.3f, 1.42f), new Vector3(2f, 0.7f, 0.16f), white);
+            Prim(PrimitiveType.Cube, "Борт_Зад", t, new Vector3(0f, 0.3f, -1.42f), new Vector3(2f, 0.7f, 0.16f), white);
+            MakeVehicle(p, AddHullPoints(t, 2f, 3f, floorY: 0f, topY: 0.7f));
+            DressHull(p, "bathtub", new Vector3(0f, 0.275f, 0f), new Vector3(2f, 0.75f, 3f));
+            // Дном вверх: сидишь на днище (верх 0.65), колёса там же.
+            MakeFlippable(p, pivotY: 0.275f, floorShift: 0.65f, wheelShift: 0f);
+        }
+
+        /// <summary>
+        /// Корпус можно перевернуть (R). Вид и коллайдеры — в контейнер «Корпус», места крепления остаются снаружи:
+        /// при перевороте они сдвигаются на floorShift (пол) и wheelShift (колёса).
+        /// </summary>
+        static void MakeFlippable(Part hull, float pivotY, float floorShift, float wheelShift)
+        {
+            var t = hull.transform;
+            var body = new GameObject("Корпус").transform;
+            body.SetParent(t, false);
+            var move = new List<Transform>();
+            for (int i = 0; i < t.childCount; i++)
+            {
+                var c = t.GetChild(i);
+                if (c == body || c.name == "Seat" || c.GetComponent<AttachPoint>() != null) continue;
+                move.Add(c);
+            }
+            foreach (var c in move) c.SetParent(body, false);
+            var flip = hull.gameObject.AddComponent<HullFlip>();
+            Set(flip, "body", body);
+            Set(flip, "pivotY", pivotY);
+            Set(flip, "floorShift", floorShift);
+            Set(flip, "wheelShift", wheelShift);
+        }
+
+        const string BodyFolder = "Body", WheelFolder = "wheel";
+
+        /// <summary>
+        /// Есть модель корпуса в Assets/Prefab/Car/Body — она заменяет вид. Коробки-примитивы
+        /// остаются невидимыми коллайдерами, так что физика корпуса не меняется.
+        /// </summary>
+        static void DressHull(Part hull, string file, Vector3 center, Vector3 size, Quaternion? preRotation = null, bool flat = false)
+            => DressPart(hull, BodyFolder, file, center, size, preRotation, flat);
+
+        /// <summary>Модель из Assets/Prefab/Car/{folder}/{file} заменяет вид детали; примитивы остаются коллайдерами.</summary>
+        static bool DressPart(Part part, string folder, string file, Vector3 center, Vector3 size, Quaternion? preRotation = null, bool flat = false)
+        {
+            var model = ModelFitter.Find(folder, file);
+            if (model == null) return false;
+            ModelFitter.StripOwnRenderers(part);
+            ModelFitter.Attach(model, part.transform, center, size, false, preRotation, flat);
+            return true;
+        }
+
+        /// <summary>Модель заменяет вид только внутри узла (баранка руля крутится — модель вместе с ней).</summary>
+        static bool DressNode(Transform node, string folder, string file, Vector3 center, Vector3 size, bool flat = false)
+        {
+            var model = ModelFitter.Find(folder, file);
+            if (model == null) return false;
+            foreach (var r in node.GetComponentsInChildren<MeshRenderer>(true))
+            {
+                var mf = r.GetComponent<MeshFilter>();
+                Object.DestroyImmediate(r);
+                if (mf != null) Object.DestroyImmediate(mf);
+            }
+            ModelFitter.Attach(model, node, center, size, false, null, flat);
+            return true;
         }
 
         static void MakePallet(Transform parent, Vector3 pos)
@@ -472,41 +857,8 @@ namespace JunkRace.EditorTools
             for (int i = -1; i <= 1; i++)
                 Prim(PrimitiveType.Cube, "Доска", t, new Vector3(i * 0.6f, 0.05f, 0f), new Vector3(0.3f, 0.1f, 2.4f), wood * 0.9f);
             MakeVehicle(p, AddHullPoints(t, 1.6f, 2.4f, floorY: 0.1f, topY: 0.5f));
-        }
-
-        /// <summary>Магазинная тележка: уже с колёсиками (прикручены прямо в сцене), но хлипкая.</summary>
-        static void MakeCart(Transform parent, Vector3 pos)
-        {
-            const float w = 0.7f, l = 1.0f, h = 0.55f;
-            var p = MakePart<Part>("Тележка", PartCategory.Hull, parent, pos, 12f, 99999f, 0f,
-                                   "Магазинная. Уже с колёсиками, но они отлетают на первой кочке.", 0.12f);
-            Color wire = new Color(0.75f, 0.77f, 0.8f);
-            var t = p.transform;
-            const float bar = 0.03f;
-            Prim(PrimitiveType.Cube, "Дно", t, new Vector3(0f, -bar / 2f, 0f), new Vector3(w, bar, l), wire);
-            Prim(PrimitiveType.Cube, "Стенка_Л", t, new Vector3(-w / 2f, h / 2f, 0f), new Vector3(bar, h, l), wire);
-            Prim(PrimitiveType.Cube, "Стенка_П", t, new Vector3(w / 2f, h / 2f, 0f), new Vector3(bar, h, l), wire);
-            Prim(PrimitiveType.Cube, "Стенка_Пер", t, new Vector3(0f, h / 2f, l / 2f), new Vector3(w, h, bar), wire);
-            Prim(PrimitiveType.Cube, "Стенка_Зад", t, new Vector3(0f, h * 0.35f, -l / 2f), new Vector3(w, h * 0.7f, bar), wire);
-            // Решётка — тонкие прутья на боках, для вида.
-            for (int i = 1; i < 5; i++)
-            {
-                float z = -l / 2f + i * l / 5f;
-                Prim(PrimitiveType.Cube, "Прут", t, new Vector3(-w / 2f - 0.005f, h / 2f, z), new Vector3(0.01f, h, 0.015f), wire * 0.8f, false);
-                Prim(PrimitiveType.Cube, "Прут", t, new Vector3(w / 2f + 0.005f, h / 2f, z), new Vector3(0.01f, h, 0.015f), wire * 0.8f, false);
-            }
-            Prim(PrimitiveType.Cube, "Ручка", t, new Vector3(0f, h + 0.1f, -l / 2f - 0.15f), new Vector3(w, 0.04f, 0.04f), new Color(0.9f, 0.15f, 0.1f));
-            Prim(PrimitiveType.Cube, "Рама", t, new Vector3(0f, -0.2f, 0f), new Vector3(w * 0.9f, 0.04f, l * 0.9f), wire * 0.7f);
-
-            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: h, wheelY: -0.3f, wheelsUnder: true, wheelPairs: 2, engines: 1));
-
-            // Колёсики уже стоят: прикручиваем их прямо в сцене, машина зарегистрирует их на старте.
-            foreach (var slot in new[] { "AP_Колесо_ПЛ", "AP_Колесо_ПП", "AP_Колесо_ЗЛ", "AP_Колесо_ЗП" })
-            {
-                var wheel = MakeWheel(parent, "Колёсико тележки", "Крутится во все стороны, кроме нужной.", 1.5f, 0.12f, 300f, 300f,
-                                      new Color(0.2f, 0.2f, 0.22f), thickness: 0.04f, breakImpulse: 200f, rolling: 4f);
-                PreMount(wheel, t.Find(slot));
-            }
+            DressHull(p, "pallet", new Vector3(0f, -0.05f, 0f), new Vector3(1.6f, 0.3f, 2.4f));
+            MakeFlippable(p, pivotY: -0.05f, floorShift: 0f, wheelShift: 0f);
         }
 
         /// <summary>Перевёрнутый стол: ножками вверх — отличные поручни.</summary>
@@ -523,6 +875,10 @@ namespace JunkRace.EditorTools
                     Prim(PrimitiveType.Cube, "Ножка", t, new Vector3(sx * (w / 2f - 0.08f), legH / 2f, sz * (l / 2f - 0.08f)),
                          new Vector3(0.08f, legH, 0.08f), wood * 0.85f);
             MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f));
+            // Модель стола обычно стоит на ножках — переворачиваем: у нас он вверх ногами.
+            DressHull(p, "table", new Vector3(0f, (legH - 0.06f) / 2f, 0f), new Vector3(w, legH + 0.06f, l), Quaternion.Euler(180f, 0f, 0f));
+            // Ножками вниз: столешница на месте, колёса опускаются ниже ножек.
+            MakeFlippable(p, pivotY: -0.03f, floorShift: 0f, wheelShift: -legH);
         }
 
         /// <summary>Шкаф, лежащий на спине. Едешь на дверцах, как на крыше.</summary>
@@ -539,6 +895,80 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cube, "Ручка_Л", t, new Vector3(-0.07f, 0.03f, 0.2f), new Vector3(0.04f, 0.05f, 0.15f), new Color(0.8f, 0.7f, 0.3f), false);
             Prim(PrimitiveType.Cube, "Ручка_П", t, new Vector3(0.07f, 0.03f, 0.2f), new Vector3(0.04f, 0.05f, 0.15f), new Color(0.8f, 0.7f, 0.3f), false);
             MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f, wheelY: -h / 2f));
+            // Модель шкафа стоит — кладём на спину (верх шкафа смотрит вперёд по машине).
+            DressHull(p, "wardrobe", new Vector3(0f, -h / 2f, 0f), new Vector3(w, h, l), Quaternion.Euler(-90f, 0f, 0f));
+            MakeFlippable(p, pivotY: -h / 2f, floorShift: 0f, wheelShift: 0f);
+        }
+
+        /// <summary>Диван: мягкий, с подлокотниками. Спинка вдоль левого борта.</summary>
+        static void MakeSofa(Transform parent, Vector3 pos)
+        {
+            const float w = 0.95f, l = 2.0f, h = 0.44f;
+            var p = MakePart<Part>("Диван", PartCategory.Hull, parent, pos, 45f, 99999f, 2500f,
+                                   "Мягкий. На кочках пружинит, на воде держится, как матрас. Сидеть — удобнее некуда.", 0.35f);
+            Color fabric = new Color(0.35f, 0.45f, 0.6f);
+            var t = p.transform;
+            // Начало координат — верх сидушки.
+            Prim(PrimitiveType.Cube, "Сидушка", t, new Vector3(0f, -h / 2f, 0f), new Vector3(w, h, l), fabric);
+            Prim(PrimitiveType.Cube, "Спинка", t, new Vector3(-w / 2f + 0.08f, 0.25f, 0f), new Vector3(0.16f, 0.5f, l), fabric * 0.85f);
+            for (int s = -1; s <= 1; s += 2)
+                Prim(PrimitiveType.Cube, "Подлокотник", t, new Vector3(0f, 0.12f, s * (l / 2f - 0.08f)), new Vector3(w, 0.24f, 0.16f), fabric * 0.9f);
+            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.5f, wheelY: -0.25f, engines: 1));
+            DressHull(p, "sofa", new Vector3(0f, (0.5f - h) / 2f, 0f), new Vector3(w, 0.5f + h, l));
+        }
+
+        /// <summary>Надувной фламинго: почти ничего не весит и плавает лучше всех, но ловит ветер.</summary>
+        static void MakeFlamingo(Transform parent, Vector3 pos)
+        {
+            const float w = 1.1f, l = 1.8f;
+            var p = MakePart<Part>("Надувной фламинго", PartCategory.Hull, parent, pos, 4f, 99999f, 3500f,
+                                   "Надувной. Лёгкий и плавает лучше всех, но ловит ветер, как парус. Не наступать каблуком.", 0.4f);
+            Color pink = new Color(1f, 0.45f, 0.65f);
+            var t = p.transform;
+            // Коллайдер — коробка (сфера с разным масштабом осей в Unity считается шаром), вид — сплюснутый шар.
+            var box = Prim(PrimitiveType.Cube, "Тело_коллайдер", t, new Vector3(0f, -0.18f, 0f), new Vector3(w * 0.9f, 0.36f, l * 0.9f), pink);
+            Object.DestroyImmediate(box.GetComponent<MeshRenderer>());
+            Prim(PrimitiveType.Sphere, "Тело", t, new Vector3(0f, -0.15f, 0f), new Vector3(w, 0.45f, l), pink, false);
+            var neck = Prim(PrimitiveType.Cylinder, "Шея", t, new Vector3(0f, 0.4f, l / 2f - 0.05f), new Vector3(0.14f, 0.4f, 0.14f), pink, false);
+            neck.transform.localRotation = Quaternion.Euler(-15f, 0f, 0f);
+            Prim(PrimitiveType.Sphere, "Голова", t, new Vector3(0f, 0.85f, l / 2f + 0.05f), Vector3.one * 0.24f, pink, false);
+            Prim(PrimitiveType.Cube, "Клюв", t, new Vector3(0f, 0.8f, l / 2f + 0.22f), new Vector3(0.08f, 0.08f, 0.16f), new Color(0.15f, 0.15f, 0.15f), false);
+            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.3f, wheelY: -0.2f, engines: 1));
+            DressHull(p, "inflatable flamingo", new Vector3(0f, 0.3f, 0.08f), new Vector3(w, 1.35f, l + 0.15f));
+        }
+
+        /// <summary>Межкомнатная дверь, снятая с петель. Плоская, как паллет, но длиннее и плавает.</summary>
+        static void MakeDoor(Transform parent, Vector3 pos)
+        {
+            const float w = 0.85f, l = 2.0f, th = 0.05f;
+            var p = MakePart<Part>("Дверь", PartCategory.Hull, parent, pos, 18f, 99999f, 2200f,
+                                   "Межкомнатная, снята с петель. Плоская, плавает. Ручка — для красоты.", 0.2f);
+            Color wood = new Color(0.82f, 0.72f, 0.55f);
+            var t = p.transform;
+            Prim(PrimitiveType.Cube, "Полотно", t, new Vector3(0f, -th / 2f, 0f), new Vector3(w, th, l), wood);
+            Prim(PrimitiveType.Cube, "Филёнка", t, new Vector3(0f, 0.003f, 0.45f), new Vector3(w * 0.7f, 0.01f, 0.7f), wood * 0.9f, false);
+            Prim(PrimitiveType.Cube, "Филёнка", t, new Vector3(0f, 0.003f, -0.45f), new Vector3(w * 0.7f, 0.01f, 0.7f), wood * 0.9f, false);
+            Prim(PrimitiveType.Cube, "Ручка", t, new Vector3(w / 2f - 0.08f, 0.03f, 0f), new Vector3(0.04f, 0.04f, 0.14f), new Color(0.8f, 0.7f, 0.3f), false);
+            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f, engines: 1));
+            DressHull(p, "door", new Vector3(0f, -th / 2f, 0f), new Vector3(w, th, l), flat: true);
+            MakeFlippable(p, pivotY: -th / 2f, floorShift: 0f, wheelShift: 0f);
+        }
+
+        /// <summary>Доска для сёрфинга: лёгкая и обтекаемая — быстрая, но узкая и вертлявая.</summary>
+        static void MakeSurfboard(Transform parent, Vector3 pos)
+        {
+            const float w = 0.6f, l = 2.2f, th = 0.08f;
+            var p = MakePart<Part>("Доска для сёрфинга", PartCategory.Hull, parent, pos, 6f, 99999f, 2500f,
+                                   "Обтекаемая и скользкая: самая быстрая, но узкая — переворачивается на раз. По воде — как дома.", 0.08f);
+            Color paint = new Color(0.2f, 0.75f, 0.85f);
+            var t = p.transform;
+            Prim(PrimitiveType.Cube, "Доска", t, new Vector3(0f, -th / 2f, -0.1f), new Vector3(w, th, l - 0.2f), paint);
+            Prim(PrimitiveType.Sphere, "Нос", t, new Vector3(0f, -th / 2f, l / 2f - 0.25f), new Vector3(w, th, 0.6f), paint, false);
+            Prim(PrimitiveType.Cube, "Полоса", t, new Vector3(0f, 0.002f, 0f), new Vector3(0.08f, 0.01f, l - 0.3f), Color.white, false);
+            Prim(PrimitiveType.Cube, "Плавник", t, new Vector3(0f, -th - 0.08f, -l / 2f + 0.2f), new Vector3(0.02f, 0.16f, 0.2f), paint * 0.7f, false);
+            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.35f, engines: 1));
+            DressHull(p, "surf", new Vector3(0f, -th / 2f, 0f), new Vector3(w, th, l), flat: true);
+            MakeFlippable(p, pivotY: -th / 2f, floorShift: 0f, wheelShift: 0f);
         }
 
         /// <summary>
@@ -573,8 +1003,9 @@ namespace JunkRace.EditorTools
             Point(hull, "Колесо_ЗЛ", new Vector3(-x, wheelY, -z), SlotType.Wheel);
             Point(hull, "Колесо_ЗП", new Vector3(x, wheelY, -z), SlotType.Wheel);
 
-            // Руль — прямо перед водителем.
-            Point(hull, "Руль", new Vector3(driverX, floorY + 0.1f, steeringZ), SlotType.Steering);
+            // Руль — прямо перед водителем, а под водителем — место для водительского кресла.
+            Point(hull, "Руль", new Vector3(driverX, floorY, steeringZ), SlotType.Steering);
+            Set(Point(hull, "Водитель", new Vector3(driverX, floorY, driverZ), SlotType.Seat), "driver", true);
 
             // Моторы в самом хвосте — чтобы не залезали в кресла салона.
             float engineZ = -length / 2f + Mathf.Min(0.4f, length * 0.25f);
@@ -612,6 +1043,12 @@ namespace JunkRace.EditorTools
             Point(hull, "Подножка_ЗЛ", new Vector3(-seatX, seatY, -z), SlotType.Seat);
             Point(hull, "Подножка_ЗП", new Vector3(seatX, seatY, -z), SlotType.Seat);
 
+            // Борта: снаружи по бокам и спереди, вплотную к корпусу. Боковина смотрит наружу (+Z детали).
+            float sideY = (topY + Mathf.Min(floorY, wheelY)) / 2f;
+            Point(hull, "Борт_Л", new Vector3(-(width / 2f + 0.04f), sideY, 0f), SlotType.Side).transform.localRotation = Quaternion.Euler(0f, -90f, 0f);
+            Point(hull, "Борт_П", new Vector3(width / 2f + 0.04f, sideY, 0f), SlotType.Side).transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
+            Point(hull, "Борт_Перед", new Vector3(0f, sideY, length / 2f + 0.04f), SlotType.Side);
+
             return new Vector3(driverX, floorY + 0.9f, driverZ);   // игрок 1.7 м: центр капсулы на 0.85 над полом
         }
 
@@ -636,13 +1073,13 @@ namespace JunkRace.EditorTools
 
         // ---------------- Колёса ----------------
 
-        enum WheelStyle { Tire, Bicycle, Manhole, Ring }
+        enum WheelStyle { Tire, Bicycle, Manhole, Ring, Porthole }
 
         /// <param name="thickness">Половина ширины шины.</param>
         static WheelPart MakeWheel(Transform parent, string name, string description, float mass, float radius,
                                    float traction, float grip, Color color, WheelStyle style = WheelStyle.Tire,
                                    float thickness = 0.12f, float breakImpulse = 600f, float rolling = 3f,
-                                   float buoyancy = 0f, float paddle = 0.5f)
+                                   float buoyancy = 0f, float paddle = 0.5f, string model = null)
         {
             var p = MakePart<WheelPart>(name, PartCategory.Drive, parent, RandomYardPos(), mass, breakImpulse, buoyancy, description);
             // Коллайдер в форме шины (плоский цилиндр): свободное колесо катится как колесо, а не как мяч.
@@ -652,7 +1089,18 @@ namespace JunkRace.EditorTools
 
             var pivot = new GameObject("Pivot").transform;
             pivot.SetParent(p.transform, false);
-            switch (style)
+            // Есть модель в Assets/Prefab/Car/wheel — ставим её внутрь вращающейся части вместо примитивов.
+            var wheelModel = string.IsNullOrEmpty(model) ? null : ModelFitter.Find(WheelFolder, model);
+            if (wheelModel != null)
+            {
+                var modelGo = ModelFitter.AttachWheel(wheelModel, pivot, radius * 2f);
+                // Ширина шины — по модели: под неё и коллайдер, и прижим к борту (WheelPart.InsetTowardHull).
+                float half = ModelFitter.VertexBounds(modelGo, p.transform).extents.x;
+                var col = p.transform.Find("Коллайдер_шины");
+                if (col != null) col.localScale = new Vector3(radius * 2f, Mathf.Max(half, 0.025f), radius * 2f);
+                Set(p, "modelHalfWidth", half);
+            }
+            else switch (style)
             {
                 case WheelStyle.Tire:
                 {
@@ -696,6 +1144,22 @@ namespace JunkRace.EditorTools
                     Ring(pivot, "Круг", radius - tube / 2f, tube, tube, 16, color, Color.white);
                     break;
                 }
+                case WheelStyle.Porthole:
+                {
+                    // Латунное кольцо, стекло и болты по кругу.
+                    Ring(pivot, "Рама", radius - 0.06f, 0.12f, thickness * 2f, 18, color, color);
+                    var glass = Prim(PrimitiveType.Cylinder, "Стекло", pivot, Vector3.zero, new Vector3((radius - 0.1f) * 2f, thickness * 0.6f, (radius - 0.1f) * 2f),
+                                     new Color(0.55f, 0.75f, 0.85f), false);
+                    glass.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
+                    for (int i = 0; i < 8; i++)
+                    {
+                        float a = i * Mathf.PI / 4f;
+                        for (int side = -1; side <= 1; side += 2)
+                            Prim(PrimitiveType.Cube, "Болт", pivot, new Vector3(side * (thickness + 0.01f), Mathf.Cos(a) * (radius - 0.06f), Mathf.Sin(a) * (radius - 0.06f)),
+                                 Vector3.one * 0.035f, color * 0.6f, false);
+                    }
+                    break;
+                }
             }
 
             Set(p, "radius", radius);
@@ -727,7 +1191,7 @@ namespace JunkRace.EditorTools
         }
 
         static void MakeEngine(Transform parent, string name, string description, float mass, float power,
-                               float breakImpulse, Color color, Vector3 size)
+                               float breakImpulse, Color color, Vector3 size, string model = null)
         {
             var p = MakePart<EnginePart>(name, PartCategory.Drive, parent, RandomYardPos(), mass, breakImpulse, 0f, description);
             p.gameObject.AddComponent<BoxCollider>().size = size;
@@ -735,6 +1199,8 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cylinder, "Выхлоп", body.transform, new Vector3(0.3f, 0.6f, -0.3f), new Vector3(0.15f, 0.3f, 0.15f), Color.gray, false);
             Set(p, "power", power);
             Set(p, "shaker", body.transform);
+            // Модель — внутрь трясущегося корпуса (у него масштаб = size, поэтому рамка — единичная).
+            if (!string.IsNullOrEmpty(model)) DressNode(body.transform, EngineFolder, model, Vector3.zero, Vector3.one);
         }
 
         static void MakeFan(Transform parent)
@@ -749,6 +1215,7 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cube, "Лопасть2", spinner, Vector3.zero, new Vector3(0.12f, 0.8f, 0.03f), Color.white, false);
             Set(p, "thrust", 1200f);
             Set(p, "spinner", spinner);
+            DressPart(p, SpecialFolder, "fan", Vector3.zero, new Vector3(0.9f, 0.9f, 0.3f));
         }
 
         static void MakeVacuum(Transform parent)
@@ -760,19 +1227,144 @@ namespace JunkRace.EditorTools
             body.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
             Set(p, "thrust", 2500f);
             Set(p, "useSpecialButton", true);
+            DressPart(p, SpecialFolder, "hoover", Vector3.zero, new Vector3(0.5f, 0.5f, 1f));
         }
 
-        static void MakeSteering(Transform parent)
+        enum SteerStyle { Wheel, Handlebar, Laptop }
+        const string SteeringFolder = "Steering", SideFolder = "Side", SeatFolder = "Seat", EngineFolder = "Engine", SpecialFolder = "Special";
+
+        static void MakeSteering(Transform parent, SteerStyle style)
         {
-            var p = MakePart<SteeringPart>("Руль", PartCategory.Control, parent, RandomYardPos(), 4f, 400f, 0f, "Без него колёса смотрят строго вперёд.");
-            p.gameObject.AddComponent<BoxCollider>().size = new Vector3(0.6f, 0.7f, 0.6f);
-            Prim(PrimitiveType.Cylinder, "Стойка", p.transform, new Vector3(0f, 0f, 0f), new Vector3(0.1f, 0.3f, 0.1f), Color.gray, false);
-            var wheel = new GameObject("Баранка").transform;
-            wheel.SetParent(p.transform, false);
-            wheel.localPosition = new Vector3(0f, 0.32f, 0f);
-            Prim(PrimitiveType.Cylinder, "Обод", wheel, Vector3.zero, new Vector3(0.55f, 0.03f, 0.55f), Color.black, false);
-            Prim(PrimitiveType.Cube, "Спица", wheel, new Vector3(0f, 0.04f, 0f), new Vector3(0.5f, 0.04f, 0.08f), Color.red, false);
-            Set(p, "wheelVisual", wheel);
+            string name, desc, hint = "";
+            float mass, breakImpulse, quality = 1f, yaw = 1.5f, turn = 90f;
+            switch (style)
+            {
+                case SteerStyle.Handlebar:
+                    name = "Руль от велика"; desc = "Чувствительный: чуть тронул — уже поворот.";
+                    mass = 3f; breakImpulse = 350f; yaw = 2.6f; turn = 35f; break;
+                case SteerStyle.Laptop:
+                    name = "Ноутбук"; desc = "Закрытый. Держишь, как руль, и надеешься на лучшее.";
+                    mass = 2f; breakImpulse = 250f; quality = 0.6f; yaw = 1f; turn = 60f; hint = "Батарея села, но крутить можно"; break;
+                default:
+                    name = "Руль"; desc = "Без него колёса смотрят строго вперёд.";
+                    mass = 4f; breakImpulse = 400f; break;
+            }
+            var p = MakePart<SteeringPart>(name, PartCategory.Control, parent, RandomYardPos(), mass, breakImpulse, 0f, desc);
+            // Начало координат — низ стойки (на полу). Рукоятка на высоте рук сидящего (~0.8 м).
+            var box = p.gameObject.AddComponent<BoxCollider>();
+            box.center = new Vector3(0f, 0.45f, 0f);
+            box.size = new Vector3(0.55f, 0.9f, 0.35f);
+            Color column = style == SteerStyle.Handlebar ? new Color(0.2f, 0.45f, 0.8f) : Color.gray;
+            Prim(PrimitiveType.Cylinder, "Стойка", p.transform, new Vector3(0f, 0.38f, 0.05f), new Vector3(0.07f, 0.38f, 0.07f), column, false);
+            Prim(PrimitiveType.Cube, "Основание", p.transform, new Vector3(0f, 0.02f, 0.05f), new Vector3(0.3f, 0.04f, 0.25f), Color.gray * 0.7f, false);
+
+            Transform visual;
+            if (style == SteerStyle.Handlebar)
+            {
+                // Велосипедный руль не наклонён: поворачивается вокруг стойки.
+                visual = new GameObject("Руль_велика").transform;
+                visual.SetParent(p.transform, false);
+                visual.localPosition = new Vector3(0f, 0.8f, 0.05f);
+                Prim(PrimitiveType.Cube, "Перекладина", visual, Vector3.zero, new Vector3(0.62f, 0.035f, 0.035f), Color.gray, false);
+                for (int s = -1; s <= 1; s += 2)
+                    Prim(PrimitiveType.Cube, "Грипса", visual, new Vector3(s * 0.27f, 0f, 0f), new Vector3(0.12f, 0.045f, 0.045f), Color.black, false);
+                Prim(PrimitiveType.Cylinder, "Звонок", visual, new Vector3(0.15f, 0.035f, 0f), new Vector3(0.05f, 0.015f, 0.05f), Color.yellow, false);
+                DressNode(visual, SteeringFolder, "bike_handlebar", Vector3.zero, new Vector3(0.62f, 0.12f, 0.2f));
+            }
+            else
+            {
+                // Баранка (и ноутбук) наклонены к водителю — колени проходят под ней.
+                var tilt = new GameObject("Наклон").transform;
+                tilt.SetParent(p.transform, false);
+                tilt.localPosition = new Vector3(0f, 0.8f, 0f);
+                tilt.localRotation = Quaternion.Euler(-55f, 0f, 0f);
+                visual = new GameObject("Баранка").transform;
+                visual.SetParent(tilt, false);
+                if (style == SteerStyle.Laptop)
+                {
+                    Prim(PrimitiveType.Cube, "Ноутбук", visual, Vector3.zero, new Vector3(0.36f, 0.025f, 0.25f), new Color(0.25f, 0.25f, 0.28f), false);
+                    Prim(PrimitiveType.Cube, "Яблочко", visual, new Vector3(0f, 0.014f, 0f), new Vector3(0.05f, 0.004f, 0.05f), new Color(0.85f, 0.85f, 0.9f), false);
+                    DressNode(visual, SteeringFolder, "laptop", Vector3.zero, new Vector3(0.36f, 0.03f, 0.25f), flat: true);
+                }
+                else
+                {
+                    Prim(PrimitiveType.Cylinder, "Обод", visual, Vector3.zero, new Vector3(0.55f, 0.03f, 0.55f), Color.black, false);
+                    Prim(PrimitiveType.Cube, "Спица", visual, new Vector3(0f, 0.04f, 0f), new Vector3(0.5f, 0.04f, 0.08f), Color.red, false);
+                    DressNode(visual, SteeringFolder, "rudder", Vector3.zero, new Vector3(0.55f, 0.07f, 0.55f), flat: true);
+                }
+            }
+            Set(p, "wheelVisual", visual);
+            Set(p, "quality", quality);
+            Set(p, "yawAccel", yaw);
+            Set(p, "visualTurn", turn);
+            SetString(p, "steerHint", hint);
+        }
+
+        // ---------------- Борта ----------------
+
+        enum ArmorStyle { CarDoor, WindowFrame, Slate }
+
+        /// <summary>
+        /// Боковина. Начало координат — середина, плашмя к борту: длина по X, высота по Y, толщина по Z
+        /// (наружу смотрит +Z). Точка «Борт» на корпусе развёрнута так, что +Z детали — наружу.
+        /// </summary>
+        static void MakeArmor(Transform parent, ArmorStyle style)
+        {
+            string name, desc, model;
+            float mass, breakImpulse, protection, drag;
+            Vector3 size;
+            switch (style)
+            {
+                case ArmorStyle.CarDoor:
+                    name = "Дверь от машины"; desc = "Настоящая, с ручкой. Тяжёлая и крепкая: прикрывает лучше всех.";
+                    mass = 22f; breakImpulse = 2500f; protection = 0.25f; drag = 0.08f; size = new Vector3(1.1f, 0.7f, 0.08f); model = "car_door"; break;
+                case ArmorStyle.WindowFrame:
+                    name = "Оконная рама"; desc = "Деревянная, без стекла. Лёгкая, ветер свистит насквозь — почти не тормозит.";
+                    mass = 9f; breakImpulse = 1200f; protection = 0.12f; drag = 0.02f; size = new Vector3(1.0f, 0.8f, 0.06f); model = "window_frame"; break;
+                default:
+                    name = "Кусок шифера"; desc = "Волнистый. Прикрывает неплохо, но от сильного удара колется сам.";
+                    mass = 14f; breakImpulse = 900f; protection = 0.2f; drag = 0.06f; size = new Vector3(1.2f, 0.6f, 0.04f); model = "slate"; break;
+            }
+            var p = MakePart<ArmorPart>(name, PartCategory.Armor, parent, RandomYardPos(), mass, breakImpulse, 0f, desc, drag);
+            var t = p.transform;
+            p.gameObject.AddComponent<BoxCollider>().size = size;
+            switch (style)
+            {
+                case ArmorStyle.CarDoor:
+                {
+                    Color paint = new Color(0.75f, 0.2f, 0.15f);
+                    Prim(PrimitiveType.Cube, "Дверь", t, new Vector3(0f, -0.1f, 0f), new Vector3(size.x, size.y - 0.2f, size.z), paint, false);
+                    Prim(PrimitiveType.Cube, "Окно", t, new Vector3(0.05f, size.y / 2f - 0.1f, 0f), new Vector3(size.x - 0.2f, 0.2f, size.z * 0.5f), new Color(0.5f, 0.65f, 0.75f), false);
+                    Prim(PrimitiveType.Cube, "Ручка", t, new Vector3(size.x / 2f - 0.15f, 0.05f, size.z / 2f + 0.01f), new Vector3(0.14f, 0.03f, 0.03f), Color.gray, false);
+                    break;
+                }
+                case ArmorStyle.WindowFrame:
+                {
+                    Color wood = new Color(0.92f, 0.92f, 0.88f);
+                    float bar = 0.07f;
+                    for (int s = -1; s <= 1; s += 2)
+                    {
+                        Prim(PrimitiveType.Cube, "Брус", t, new Vector3(0f, s * (size.y - bar) / 2f, 0f), new Vector3(size.x, bar, size.z), wood, false);
+                        Prim(PrimitiveType.Cube, "Брус", t, new Vector3(s * (size.x - bar) / 2f, 0f, 0f), new Vector3(bar, size.y, size.z), wood, false);
+                    }
+                    Prim(PrimitiveType.Cube, "Переплёт", t, Vector3.zero, new Vector3(0.04f, size.y, size.z * 0.8f), wood * 0.95f, false);
+                    Prim(PrimitiveType.Cube, "Переплёт", t, Vector3.zero, new Vector3(size.x, 0.04f, size.z * 0.8f), wood * 0.95f, false);
+                    break;
+                }
+                default:
+                {
+                    // Волны шифера — полосы, через одну выдвинутые наружу.
+                    Color grey = new Color(0.62f, 0.64f, 0.62f);
+                    const int waves = 8;
+                    float step = size.x / waves;
+                    for (int i = 0; i < waves; i++)
+                        Prim(PrimitiveType.Cube, "Волна", t, new Vector3(-size.x / 2f + step * (i + 0.5f), 0f, i % 2 == 0 ? 0.01f : -0.01f),
+                             new Vector3(step * 1.02f, size.y, 0.02f), i % 2 == 0 ? grey : grey * 0.9f, false);
+                    break;
+                }
+            }
+            Set(p, "protection", protection);
+            DressPart(p, SideFolder, model, Vector3.zero, size);
         }
 
         static void MakeUmbrella(Transform parent)
@@ -792,6 +1384,7 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Sphere, "Тело", p.transform, Vector3.zero, Vector3.one * 0.6f, Color.yellow, false);
             Prim(PrimitiveType.Sphere, "Голова", p.transform, new Vector3(0f, 0.35f, 0.2f), Vector3.one * 0.35f, Color.yellow, false);
             Prim(PrimitiveType.Cube, "Клюв", p.transform, new Vector3(0f, 0.33f, 0.4f), new Vector3(0.15f, 0.06f, 0.15f), new Color(1f, 0.5f, 0f), false);
+            DressPart(p, SpecialFolder, "duck", new Vector3(0f, 0.1f, 0.08f), new Vector3(0.6f, 0.8f, 0.76f));
         }
 
         // ---------------- Хелперы ----------------
@@ -820,8 +1413,8 @@ namespace JunkRace.EditorTools
             return part;
         }
 
-        static void Point(Transform owner, string name, Vector3 localPos,
-                          SlotType slot = SlotType.Body, bool steers = false)
+        static AttachPoint Point(Transform owner, string name, Vector3 localPos,
+                                 SlotType slot = SlotType.Body, bool steers = false)
         {
             var go = new GameObject("AP_" + name);
             go.transform.SetParent(owner, false);
@@ -829,6 +1422,7 @@ namespace JunkRace.EditorTools
             var ap = go.AddComponent<AttachPoint>();
             SetEnum(ap, "slot", (int)slot);
             Set(ap, "steers", steers);
+            return ap;
         }
 
         /// <summary>
@@ -898,6 +1492,13 @@ namespace JunkRace.EditorTools
         {
             var so = new SerializedObject(target);
             so.FindProperty(field).boolValue = value;
+            so.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        static void SetString(Object target, string field, string value)
+        {
+            var so = new SerializedObject(target);
+            so.FindProperty(field).stringValue = value;
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 

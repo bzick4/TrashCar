@@ -50,19 +50,33 @@ namespace JunkRace
                 if (heldRadiusFor != Held)
                 {
                     heldRadiusFor = Held;
-                    heldRadius = 0.3f;
-                    bool any = false;
-                    Bounds b = default;
-                    foreach (var r in Held.GetComponentsInChildren<Renderer>())
-                    {
-                        if (!any) { b = r.bounds; any = true; }
-                        else b.Encapsulate(r.bounds);
-                    }
-                    if (any) heldRadius = b.extents.magnitude;
+                    heldRadius = RadiusOf(Held);
                 }
                 return heldRadius;
             }
         }
+
+        /// <summary>Как далеко от рук держать деталь: ладони (~0.5 м перед грудью) у ближнего края детали.</summary>
+        public const float HandReach = 0.5f;
+
+        /// <summary>Примерный радиус детали по её виду.</summary>
+        public static float RadiusOf(Part part)
+        {
+            if (part == null) return 0f;
+            bool any = false;
+            Bounds b = default;
+            foreach (var r in part.GetComponentsInChildren<Renderer>())
+            {
+                if (!r.enabled) continue;
+                if (!any) { b = r.bounds; any = true; }
+                else b.Encapsulate(r.bounds);
+            }
+            // Диагональ рамки завышает (угол коробки дальше края) — берём чуть меньше.
+            return any ? b.extents.magnitude * 0.85f : 0.3f;
+        }
+
+        /// <summary>Где держать деталь (в координатах игрока): у рук, большое — дальше, чтобы не проходило сквозь.</summary>
+        public static Vector3 HoldOffset(float radius) => new Vector3(0f, 0.3f, HandReach + radius);
 
         PlayerController player;
         Part heldRadiusFor;
@@ -81,6 +95,8 @@ namespace JunkRace
         // у неё AttachPoint'ы, которые регистрируются в AttachPoint.All.
         Transform ghost;
         Part ghostFor;
+        // Пул кусков призрака: при смене детали не создаём/удаляем объекты, а переиспользуем.
+        readonly List<MeshFilter> ghostPieces = new List<MeshFilter>();
 
         Camera cam;
         GUIStyle labelStyle, shadowStyle, centerStyle;
@@ -143,8 +159,8 @@ namespace JunkRace
 
         void Update()
         {
-            if (InGameMenu.IsOpen) return;
-            if (player.InVehicle)
+            if (InGameMenu.IsOpen || RaceTimer.IsLoading) return;
+            if (player.InVehicle || RaceTimer.InteractionLocked)
             {
                 if (searchPile != null && !waitingResult) CancelSearch(null);
                 LookTarget = null;
@@ -185,7 +201,7 @@ namespace JunkRace
             }
             else
             {
-                if (LookTarget != null) World.RequestGrab(LookTarget);
+                if (LookTarget != null && World.MayUse(World.LocalId, LookTarget.Vehicle)) World.RequestGrab(LookTarget);
             }
         }
 
@@ -355,6 +371,7 @@ namespace JunkRace
                 if (p == null || p.Owner == null) continue;
                 var v = p.Owner.Vehicle;
                 if (v == null || v == Held.Vehicle) continue;   // свои же точки (если несём корпус)
+                if (!v.MayUse(World.LocalId)) continue;          // чужая машина — её строит другой
                 if ((p.transform.position - me).sqrMagnitude > r2) continue;
                 if (!v.CanAttach(Held, p)) continue;
                 shownPoints.Add(p);
@@ -446,12 +463,7 @@ namespace JunkRace
         void BuildGhost(Part part)
         {
             if (ghost == null) ghost = new GameObject("AttachGhost").transform;
-            for (int i = ghost.childCount - 1; i >= 0; i--)
-            {
-                var child = ghost.GetChild(i).gameObject;
-                child.SetActive(false);
-                Destroy(child);
-            }
+            int used = 0;
 
             // Позы мешей относительно самой детали.
             Matrix4x4 toPart = part.transform.worldToLocalMatrix;
@@ -461,37 +473,57 @@ namespace JunkRace
                 if (!mf.TryGetComponent(out MeshRenderer mr) || !mr.enabled) continue;
 
                 Matrix4x4 m = toPart * mf.transform.localToWorldMatrix;
-                var go = new GameObject("Ghost_" + mf.name);
-                go.transform.SetParent(ghost, false);
-                go.transform.localPosition = m.GetColumn(3);
-                go.transform.localRotation = m.rotation;
-                go.transform.localScale = m.lossyScale;
-                go.AddComponent<MeshFilter>().sharedMesh = mf.sharedMesh;
-                var r = go.AddComponent<MeshRenderer>();
-                r.sharedMaterial = ghostMat;
-                r.shadowCastingMode = ShadowCastingMode.Off;
-                r.receiveShadows = false;
+                var piece = GhostPiece(used++);
+                var t = piece.transform;
+                t.localPosition = m.GetColumn(3);
+                t.localRotation = m.rotation;
+                t.localScale = m.lossyScale;
+                piece.sharedMesh = mf.sharedMesh;
+                if (!piece.gameObject.activeSelf) piece.gameObject.SetActive(true);
             }
+            for (int i = used; i < ghostPieces.Count; i++)
+                if (ghostPieces[i].gameObject.activeSelf) ghostPieces[i].gameObject.SetActive(false);
             ghostFor = part;
+        }
+
+        MeshFilter GhostPiece(int index)
+        {
+            if (index < ghostPieces.Count) return ghostPieces[index];
+            var go = new GameObject("GhostPiece");
+            go.transform.SetParent(ghost, false);
+            var mf = go.AddComponent<MeshFilter>();
+            var r = go.AddComponent<MeshRenderer>();
+            r.sharedMaterial = ghostMat;
+            r.shadowCastingMode = ShadowCastingMode.Off;
+            r.receiveShadows = false;
+            ghostPieces.Add(mf);
+            return mf;
         }
 
         // ============================ Подписи и подсказка ============================
 
         void OnGUI()
         {
-            if (player.InVehicle || InGameMenu.IsOpen) return;
+            if (player.InVehicle || InGameMenu.IsOpen || RaceTimer.InteractionLocked) return;
             DrawPointLabels();
             DrawPileLabels();
             DrawSearch();
 
             string hint = searchPile != null ? "E — бросить поиск"
                 : Held == null && LookTarget == null && LookPile != null ? $"E — порыться в «{LookPile.DisplayName}»   F — сесть в машину"
+                : Held == null && LookTarget != null && !World.MayUse(World.LocalId, LookTarget.Vehicle)
+                ? (LookTarget is SeatPart other && other.CanSit
+                    ? $"F — сесть пассажиром в «{other.DisplayName}»   (машина игрока {World.OwnerName(LookTarget.Vehicle)})"
+                    : $"Это машина игрока {World.OwnerName(LookTarget.Vehicle)} — её строит он. Найди свой корпус.")
                 : Held == null
                 ? (LookTarget is SeatPart chair && chair.CanSit
                     ? $"F — сесть в «{chair.DisplayName}»   E — снять (переставить)"
                     : LookTarget != null && LookTarget.MountedOn != null && LookTarget.Vehicle != null
                     ? $"E — снять «{LookTarget.DisplayName}» с «{LookTarget.Vehicle.RootPart.DisplayName}» (переставить)   F — сесть в машину"
+                    : LookTarget != null && LookTarget.GetComponent<HullFlip>() != null
+                    ? $"E — взять «{LookTarget.DisplayName}»   R — перевернуть   F — сесть в машину"
                     : "E — взять деталь   F — сесть в машину   V — вид")
+                : Held.GetComponent<HullFlip>() != null && snapTarget == null ? $"E — бросить «{Held.DisplayName}»   R — перевернуть"
                 : snapTarget != null ? $"E — прикрутить «{Held.DisplayName}» → {snapTarget.Label} ({AttachPoint.SlotName(snapTarget.Slot)})"
                 : shownPoints.Count > 0 ? $"E — бросить «{Held.DisplayName}»   ({(player.FirstPersonView ? "наведи прицел на зелёное место" : "поднеси к зелёному месту")}, чтобы прикрутить)"
                 : $"E — бросить «{Held.DisplayName}»";

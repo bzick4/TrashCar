@@ -18,7 +18,9 @@ namespace JunkRace
         public readonly InputAction LookMouse, LookStick, Stats, ToggleView;
 
         // Пешком
-        public readonly InputAction Move, Jump, Grab, Enter;
+        public readonly InputAction Move, Jump, Grab, Enter, Rotate;
+        /// <summary>«Готов» на сборке — работает и пешком, и за рулём.</summary>
+        public readonly InputAction Ready;
 
         // За рулём
         public readonly InputAction Throttle, Steer, Special, Exit, Flip;
@@ -29,6 +31,8 @@ namespace JunkRace
             LookStick = Camera.AddAction("LookStick", InputActionType.Value, "<Gamepad>/rightStick");
             Stats = Camera.AddAction("Stats", InputActionType.Button, "<Keyboard>/tab");
             Stats.AddBinding("<Gamepad>/dpad/up");
+            Ready = Camera.AddAction("Ready", InputActionType.Button, "<Keyboard>/g");
+            Ready.AddBinding("<Gamepad>/dpad/left");
             ToggleView = Camera.AddAction("ToggleView", InputActionType.Button, "<Keyboard>/v");
             ToggleView.AddBinding("<Gamepad>/rightStickPress");
 
@@ -46,6 +50,9 @@ namespace JunkRace
 
             Enter = OnFoot.AddAction("Enter", InputActionType.Button, "<Keyboard>/f");
             Enter.AddBinding("<Gamepad>/buttonNorth");
+
+            Rotate = OnFoot.AddAction("Rotate", InputActionType.Button, "<Keyboard>/r");
+            Rotate.AddBinding("<Gamepad>/dpad/down");
 
             Throttle = Driving.AddAction("Throttle", InputActionType.Value);
             Throttle.AddCompositeBinding("1DAxis")
@@ -91,8 +98,9 @@ namespace JunkRace
         readonly GameControls controls;
         public PlayerPartInput(GameControls controls) => this.controls = controls;
 
-        public float Throttle => controls.Throttle.ReadValue<float>();
-        public float Steer => controls.Steer.ReadValue<float>();
-        public bool Special => controls.Special.IsPressed();
+        // Меню открыто (в коопе мир идёт) — машину не ведём.
+        public float Throttle => InGameMenu.IsOpen ? 0f : controls.Throttle.ReadValue<float>();
+        public float Steer => InGameMenu.IsOpen ? 0f : controls.Steer.ReadValue<float>();
+        public bool Special => !InGameMenu.IsOpen && controls.Special.IsPressed();
     }
 }

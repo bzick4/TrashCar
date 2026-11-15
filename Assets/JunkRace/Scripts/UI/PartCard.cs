@@ -43,7 +43,7 @@ namespace JunkRace
             {
                 nextVehicleScan = Time.unscaledTime + 1f;
                 vehicles.Clear();
-                vehicles.AddRange(FindObjectsByType<Vehicle>(FindObjectsSortMode.None));
+                vehicles.AddRange(Vehicle.All);
             }
         }
 
@@ -176,8 +176,16 @@ namespace JunkRace
                     else { color = Down; what = "здесь не работает"; }
                     break;
                 }
+                case SlotType.Side:
+                    if (part is ArmorPart armor) { color = Up; what = $"прикрывает машину (+{armor.Protection * 100f:0}%)"; }
+                    else if (part.NativeSlot == SlotType.Engine && part.GivesPowerIn(slot))
+                    { color = Up; what = $"работает как мотор ({part.AsEnginePower / 735.5f:0.0} л.с.)"; }
+                    else if (part.WorksInBody) { color = Up; what = "работает"; }
+                    else { color = Down; what = "здесь не работает, просто груз"; }
+                    break;
                 default:
-                    if (part.NativeSlot == SlotType.Engine && part.GivesPowerIn(slot))
+                    if (part is ArmorPart) { color = Meh; what = "просто груз: защищает только на борту"; }
+                    else if (part.NativeSlot == SlotType.Engine && part.GivesPowerIn(slot))
                     { color = Up; what = $"работает как мотор ({part.AsEnginePower / 735.5f:0.0} л.с.)"; }
                     else if (part.WorksInBody) { color = Up; what = "работает"; }
                     else { color = Down; what = "здесь не работает, просто груз"; }
@@ -194,6 +202,8 @@ namespace JunkRace
             Row("Вес", before.Mass, after.Mass, "кг", false, "0");
             if (Mathf.Abs(before.SteerQuality - after.SteerQuality) > 0.001f)
                 Row("Руль", before.SteerQuality * 100f, after.SteerQuality * 100f, "%", true, "0");
+            if (Mathf.Abs(before.Protection - after.Protection) > 0.001f)
+                Row("Защита", before.Protection * 100f, after.Protection * 100f, "%", true, "0");
             if (before.Wheels != after.Wheels)
                 sb.Append("Колёс: ").Append(before.Wheels).Append(" → ").Append(after.Wheels).Append('\n');
             if (before.Floats != after.Floats) Flag("Плавает", before.Floats, after.Floats);
@@ -229,6 +239,7 @@ namespace JunkRace
             sb.Append("Руль: ").Append(!e.CanSteer ? "<color=" + Down + ">нет — колёса не поворачивают</color>"
                 : e.SteerQuality >= 0.999f ? "есть"
                 : "<color=" + Meh + ">туго (" + (e.SteerQuality * 100f).ToString("0") + "%)</color>").Append('\n');
+            if (e.Protection > 0f) sb.Append("Защита бортами: +").Append((e.Protection * 100f).ToString("0")).Append("%\n");
             sb.Append("В воде: ").Append(e.Floats ? "плавает" : "<color=" + Down + ">тонет</color>").Append('\n');
         }
 
@@ -260,12 +271,15 @@ namespace JunkRace
             GUI.Label(new Rect(rect.x + 18f, rect.y + 56f, width - 36f, rect.height - 60f), body, text);
         }
 
+        GUIStyle speedStyle;
+
         void DrawSpeedometer(float screenW)
         {
             var v = player.CurrentVehicle;
             if (v == null) return;
             float kmh = Mathf.Abs(v.ForwardSpeed) * 3.6f;
-            var style = new GUIStyle(title) { fontSize = 64, alignment = TextAnchor.LowerRight };
+            speedStyle ??= new GUIStyle(title) { fontSize = 64, alignment = TextAnchor.LowerRight };
+            var style = speedStyle;
             GUI.Label(new Rect(screenW - 420f, 1080f - 150f, 400f, 90f), $"{kmh:0} <size=28>км/ч</size>", style);
         }
 

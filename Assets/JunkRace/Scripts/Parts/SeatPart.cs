@@ -22,9 +22,12 @@ namespace JunkRace
         public override bool WorksInBody => true;   // кресло на кузове — тоже место
         public override bool IsOccupied => Occupant != null;
 
-        /// <summary>Можно ли сесть: прикручено к машине, в слоте сиденья или кузова, свободно.</summary>
+        /// <summary>Стоит на месте водителя: садятся в него за руль, а не пассажиром.</summary>
+        public bool IsDriverChair => MountedOn != null && MountedOn.IsDriver && Vehicle != null;
+
+        /// <summary>Можно ли сесть пассажиром: прикручено к машине, в слоте сиденья или кузова, свободно.</summary>
         public bool CanSit =>
-            Occupant == null && !IsHidden && !IsCarried && Vehicle != null && MountedOn != null
+            !IsDriverChair && Occupant == null && !IsHidden && !IsCarried && Vehicle != null && MountedOn != null
             && (Slot == SlotType.Seat || Slot == SlotType.Body) && !Vehicle.RootPart.IsCarried;
 
         public override void DescribeStats(List<string> lines)

@@ -7,7 +7,7 @@ namespace JunkRace
     /// Тип места на машине. Место решает, как работает деталь:
     /// в слоте колеса всё катится как колесо, в слоте мотора — даёт мощность (если может), и т. д.
     /// </summary>
-    public enum SlotType { Body, Wheel, Steering, Engine, Seat }
+    public enum SlotType { Body, Wheel, Steering, Engine, Seat, Side }
 
     /// <summary>
     /// Точка крепления («место под скотч»). Дочерний объект детали.
@@ -22,18 +22,21 @@ namespace JunkRace
         [SerializeField] SlotType slot = SlotType.Body;
         [Tooltip("Только для колёс: поворачивает ли рулём (передняя пара).")]
         [SerializeField] bool steers = false;
+        [Tooltip("Только для сидений: место водителя. Кресло здесь — водительское (F — за руль).")]
+        [SerializeField] bool driver = false;
         [Tooltip("Подпись для игрока. Пусто = имя объекта без «AP_».")]
         [SerializeField] string label = "";
 
         public SlotType Slot => slot;
         public bool Steers => slot == SlotType.Wheel && steers;
+        public bool IsDriver => slot == SlotType.Seat && driver;
         public string Label => string.IsNullOrEmpty(label) ? DefaultLabel() : label;
 
         public Part Owner { get; private set; }
         public Part Occupant { get; internal set; }
         public bool Occupied => Occupant != null;
 
-        static readonly string[] SlotNames = { "Кузов", "Колесо", "Руль", "Мотор", "Сиденье" };
+        static readonly string[] SlotNames = { "Кузов", "Колесо", "Руль", "Мотор", "Сиденье", "Борт" };
         public static string SlotName(SlotType slot) => SlotNames[(int)slot];
 
         void Awake() => Owner = GetComponentInParent<Part>();
@@ -56,6 +59,7 @@ namespace JunkRace
                 : slot == SlotType.Steering ? Color.yellow
                 : slot == SlotType.Engine ? new Color(1f, 0.5f, 0f)
                 : slot == SlotType.Seat ? Color.magenta
+                : slot == SlotType.Side ? new Color(0.6f, 0.6f, 0.65f)
                 : Color.green;
             Gizmos.DrawWireSphere(transform.position, 0.15f);
             Gizmos.DrawRay(transform.position, transform.forward * 0.4f);

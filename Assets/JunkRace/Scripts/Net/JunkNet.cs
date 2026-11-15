@@ -24,8 +24,8 @@ namespace JunkRace
         const string MsgHello = "JR_HELLO", MsgReq = "JR_REQ", MsgPose = "JR_POSE", MsgInput = "JR_IN";
         const string MsgEvt = "JR_EVT", MsgRoster = "JR_ROSTER", MsgFull = "JR_FULL", MsgPoses = "JR_POSES", MsgWorld = "JR_WORLD";
 
-        public const byte ReqGrab = 1, ReqRelease = 2, ReqEnter = 3, ReqExit = 4, ReqFlip = 5, ReqSearch = 6, ReqSit = 7;
-        const byte EvtGrab = 1, EvtRelease = 2, EvtAttach = 3, EvtDetach = 4, EvtDriver = 5, EvtFinish = 6, EvtSearch = 7, EvtSeat = 8;
+        public const byte ReqGrab = 1, ReqRelease = 2, ReqEnter = 3, ReqExit = 4, ReqFlip = 5, ReqSearch = 6, ReqSit = 7, ReqFlipHull = 8, ReqReady = 9, ReqBuildReady = 10;
+        const byte EvtGrab = 1, EvtRelease = 2, EvtAttach = 3, EvtDetach = 4, EvtDriver = 5, EvtFinish = 6, EvtSearch = 7, EvtSeat = 8, EvtOwner = 9, EvtHullFlip = 10, EvtPhase = 11, EvtEject = 12, EvtBuildReady = 13;
 
         const float SendInterval = 1f / 20f;
         const int SnapshotBudget = 36;   // ~36 × 30 байт — влезает в один UDP-пакет
@@ -100,6 +100,9 @@ namespace JunkRace
                     v.PartDetached += BroadcastDetach;
                 }
                 RaceTimer.Finished += BroadcastFinish;
+                RaceTimer.PhaseChanged += BroadcastPhase;
+                RaceTimer.BuildReadyChanged += BroadcastBuildReady;
+                World.OwnerChanged += BroadcastOwner;
                 roster[NetworkManager.ServerClientId] = SafeName(GameSession.PlayerName);
             }
             else
@@ -124,6 +127,9 @@ namespace JunkRace
             if (World.Net == this) World.Net = null;
             Authority.Provider = () => true;
             RaceTimer.Finished -= BroadcastFinish;
+            RaceTimer.PhaseChanged -= BroadcastPhase;
+            RaceTimer.BuildReadyChanged -= BroadcastBuildReady;
+            World.OwnerChanged -= BroadcastOwner;
             World.ClearRemotes();
 
             if (!registered || nm == null) return;
@@ -136,6 +142,8 @@ namespace JunkRace
 
         void Update()
         {
+            // Сеть уже закрыта (хост вышел, связь оборвалась, выходим в меню) — слать нечего, сцена сейчас сменится.
+            if (nm == null || !nm.IsListening || nm.CustomMessagingManager == null) return;
             sendTimer += Time.unscaledDeltaTime;
             if (sendTimer >= SendInterval)
             {
@@ -169,7 +177,7 @@ namespace JunkRace
 
         JunkPile PileAt(int index) => index >= 0 && index < piles.Count ? piles[index] : null;
 
-        static string HierarchyKey(Transform t)
+        public static string HierarchyKey(Transform t)
         {
             var stack = new List<string>();
             for (var cur = t; cur != null; cur = cur.parent) stack.Add(cur.GetSiblingIndex().ToString("D4"));
@@ -247,6 +255,22 @@ namespace JunkRace
             Msg.SendNamedMessage(MsgReq, NetworkManager.ServerClientId, w, NetworkDelivery.ReliableSequenced);
         }
 
+        public void SendFlipHullRequest(HullFlip hull)
+        {
+            using var w = new FastBufferWriter(16, Allocator.Temp);
+            w.WriteValueSafe(ReqFlipHull);
+            w.WriteValueSafe((ushort)hull.GetComponent<Part>().NetIndex);
+            Msg.SendNamedMessage(MsgReq, NetworkManager.ServerClientId, w, NetworkDelivery.ReliableSequenced);
+        }
+
+        public void SendBuildReady(bool ready)
+        {
+            using var w = new FastBufferWriter(8, Allocator.Temp);
+            w.WriteValueSafe(ReqBuildReady);
+            w.WriteValueSafe(ready);
+            Msg.SendNamedMessage(MsgReq, NetworkManager.ServerClientId, w, NetworkDelivery.ReliableSequenced);
+        }
+
         public void SendSimpleRequest(byte type)
         {
             using var w = new FastBufferWriter(8, Allocator.Temp);
@@ -317,6 +341,18 @@ namespace JunkRace
                     r.ReadValueSafe(out ushort seatIndex);
                     World.ServerSit(sender, PartAt(seatIndex) as SeatPart);
                     break;
+                case ReqBuildReady:
+                    r.ReadValueSafe(out bool buildReady);
+                    World.ServerBuildReady(sender, buildReady);
+                    break;
+                case ReqReady:
+                    if (RaceTimer.Instance) RaceTimer.Instance.ServerPlayerReady(sender);
+                    break;
+                case ReqFlipHull:
+                    r.ReadValueSafe(out ushort hullIndex);
+                    var hullPart = PartAt(hullIndex);
+                    World.ServerFlipHull(sender, hullPart != null ? hullPart.GetComponent<HullFlip>() : null);
+                    break;
             }
         }
 
@@ -347,6 +383,7 @@ namespace JunkRace
                 if (g.Driving != null) { var v = g.Driving; World.ApplyExit(g); BroadcastDriver(v, null); }
                 if (g.Seat != null) { var s = g.Seat; World.ApplyLeaveSeat(g, Vector3.zero); BroadcastSeat(s, null); }
             }
+            World.ServerReleaseOwner(clientId);   // ушёл — его машину может взять другой
             RemoveGhost(clientId);
             roster.Remove(clientId);
             readyClients.Remove(clientId);
@@ -413,7 +450,7 @@ namespace JunkRace
         static bool IsFreeBody(Part p, out Rigidbody rb)
         {
             rb = null;
-            if (p == null || p.MountedOn != null || p.IsCarried || p.IsHidden) return false;
+            if (p == null || p.MountedOn != null || p.IsCarried || p.IsHidden || !p.gameObject.activeInHierarchy) return false;
             return p.TryGetComponent(out rb);
         }
 
@@ -497,13 +534,96 @@ namespace JunkRace
             SendToClients(MsgEvt, w, NetworkDelivery.ReliableSequenced);
         }
 
-        void BroadcastFinish(float elapsed, int partCount)
+        public void BroadcastEject(Vehicle vehicle, IAvatar driver, Vector3 fling)
+        {
+            using var w = new FastBufferWriter(48, Allocator.Temp);
+            w.WriteValueSafe(EvtEject);
+            w.WriteValueSafe((ushort)vehicle.RootPart.NetIndex);
+            w.WriteValueSafe(driver.ClientId);
+            w.WriteValueSafe(fling);
+            SendToClients(MsgEvt, w, NetworkDelivery.ReliableSequenced);
+        }
+
+        void BroadcastBuildReady()
+        {
+            var timer = RaceTimer.Instance;
+            if (timer == null) return;
+            using var w = new FastBufferWriter(64, Allocator.Temp, 512);
+            w.WriteValueSafe(EvtBuildReady);
+            WriteBuildReady(w, timer);
+            SendToClients(MsgEvt, w, NetworkDelivery.ReliableSequenced);
+        }
+
+        static void WriteBuildReady(FastBufferWriter w, RaceTimer timer)
+        {
+            var ids = new List<ulong>(timer.BuildReadyIds);
+            w.WriteValueSafe(ids.Count);
+            foreach (var id in ids) w.WriteValueSafe(id);
+        }
+
+        static void ReadBuildReady(FastBufferReader r, RaceTimer timer)
+        {
+            r.ReadValueSafe(out int count);
+            var ids = new List<ulong>(count);
+            for (int i = 0; i < count; i++) { r.ReadValueSafe(out ulong id); ids.Add(id); }
+            if (timer != null) timer.ApplyBuildReady(ids);
+        }
+
+        void BroadcastOwner(Vehicle vehicle)
+        {
+            using var w = new FastBufferWriter(24, Allocator.Temp);
+            w.WriteValueSafe(EvtOwner);
+            w.WriteValueSafe((ushort)vehicle.RootPart.NetIndex);
+            w.WriteValueSafe(vehicle.OwnerId);
+            SendToClients(MsgEvt, w, NetworkDelivery.ReliableSequenced);
+        }
+
+        public void BroadcastFlipHull(HullFlip hull, bool flipped)
         {
             using var w = new FastBufferWriter(16, Allocator.Temp);
-            w.WriteValueSafe(EvtFinish);
-            w.WriteValueSafe(elapsed);
-            w.WriteValueSafe(partCount);
+            w.WriteValueSafe(EvtHullFlip);
+            w.WriteValueSafe((ushort)hull.GetComponent<Part>().NetIndex);
+            w.WriteValueSafe(flipped);
             SendToClients(MsgEvt, w, NetworkDelivery.ReliableSequenced);
+        }
+
+        void BroadcastFinish(RaceTimer.Racer r)
+        {
+            using var w = new FastBufferWriter(32, Allocator.Temp);
+            w.WriteValueSafe(EvtFinish);
+            w.WriteValueSafe(r.Id);
+            w.WriteValueSafe(r.Time);
+            w.WriteValueSafe(r.Parts);
+            SendToClients(MsgEvt, w, NetworkDelivery.ReliableSequenced);
+        }
+
+        void BroadcastPhase()
+        {
+            var timer = RaceTimer.Instance;
+            if (timer == null) return;
+            using var w = new FastBufferWriter(64, Allocator.Temp, 1024);
+            w.WriteValueSafe(EvtPhase);
+            WritePhase(w, timer);
+            SendToClients(MsgEvt, w, NetworkDelivery.ReliableSequenced);
+        }
+
+        /// <summary>Фаза заезда, её время и список гонщиков.</summary>
+        static void WritePhase(FastBufferWriter w, RaceTimer timer)
+        {
+            w.WriteValueSafe((byte)timer.Phase);
+            w.WriteValueSafe(timer.PhaseTime);
+            w.WriteValueSafe(timer.Racers.Count);
+            foreach (var r in timer.Racers) w.WriteValueSafe(r.Id);
+        }
+
+        static void ReadPhase(FastBufferReader r, RaceTimer timer)
+        {
+            r.ReadValueSafe(out byte phase);
+            r.ReadValueSafe(out float time);
+            r.ReadValueSafe(out int count);
+            var ids = new List<ulong>(count);
+            for (int i = 0; i < count; i++) { r.ReadValueSafe(out ulong id); ids.Add(id); }
+            if (timer != null) timer.ApplyPhase((MatchPhase)phase, time, ids);
         }
 
         /// <summary>Всё текущее состояние — новому клиенту.</summary>
@@ -511,10 +631,23 @@ namespace JunkRace
         {
             using var w = new FastBufferWriter(512, Allocator.Temp, 16384);
 
+            // Сид трассы — первым: клиент построит ту же самую.
+            w.WriteValueSafe(RouteGenerator.Seed);
+            w.WriteValueSafe(RouteGenerator.Players);
+
+            // Заезд: фаза, гонщики, кто уже финишировал.
             var timer = RaceTimer.Instance;
-            w.WriteValueSafe(timer != null ? timer.Elapsed : -1f);
-            w.WriteValueSafe(timer != null && timer.IsFinished);
-            w.WriteValueSafe(timer != null ? timer.PartsAtFinish : 0);
+            w.WriteValueSafe(timer != null);
+            if (timer != null)
+            {
+                WritePhase(w, timer);
+                WriteBuildReady(w, timer);
+                int done = 0;
+                foreach (var rc in timer.Racers) if (rc.Finished) done++;
+                w.WriteValueSafe(done);
+                foreach (var rc in timer.Racers)
+                    if (rc.Finished) { w.WriteValueSafe(rc.Id); w.WriteValueSafe(rc.Time); w.WriteValueSafe(rc.Parts); }
+            }
 
             // Уже найденные в кучах детали (до прикреплений: найденную могли и прикрутить).
             var revealed = new List<Part>();
@@ -526,6 +659,12 @@ namespace JunkRace
                 w.WriteValueSafe(p.transform.position);
                 w.WriteValueSafe(p.transform.rotation);
             }
+
+            // Перевёрнутые корпуса — до прикреплений: места крепления у них сдвинуты.
+            var flippedHulls = new List<Part>();
+            foreach (var p in parts) if (p.TryGetComponent(out HullFlip hf) && hf.Flipped) flippedHulls.Add(p);
+            w.WriteValueSafe(flippedHulls.Count);
+            foreach (var p in flippedHulls) w.WriteValueSafe((ushort)p.NetIndex);
 
             // Прикрепления: в порядке прикручивания, значит родитель всегда раньше ребёнка.
             var attached = new List<Part>();
@@ -556,6 +695,11 @@ namespace JunkRace
             foreach (var a in World.All()) if (a.Seat != null) passengers.Add(a);
             w.WriteValueSafe(passengers.Count);
             foreach (var a in passengers) { w.WriteValueSafe(a.ClientId); w.WriteValueSafe((ushort)a.Seat.NetIndex); }
+
+            var owned = new List<Vehicle>();
+            foreach (var v in vehicles) if (v != null && v.IsOwned) owned.Add(v);
+            w.WriteValueSafe(owned.Count);
+            foreach (var v in owned) { w.WriteValueSafe((ushort)v.RootPart.NetIndex); w.WriteValueSafe(v.OwnerId); }
 
             Msg.SendNamedMessage(MsgFull, clientId, w, NetworkDelivery.ReliableFragmentedSequenced);
         }
@@ -655,11 +799,45 @@ namespace JunkRace
                     World.ApplySearch(id, PileAt(pileIndex), partIndex == NoIndex ? null : PartAt(partIndex), position, Vector3.zero);
                     break;
                 }
+                case EvtOwner:
+                {
+                    r.ReadValueSafe(out ushort vehicleIndex);
+                    r.ReadValueSafe(out ulong owner);
+                    var v = VehicleAt(vehicleIndex);
+                    if (v != null) v.ApplyOwner(owner);
+                    break;
+                }
+                case EvtHullFlip:
+                {
+                    r.ReadValueSafe(out ushort hullIndex);
+                    r.ReadValueSafe(out bool flipped);
+                    var hp = PartAt(hullIndex);
+                    if (hp != null && hp.TryGetComponent(out HullFlip hf)) hf.ApplyFlipped(flipped);
+                    break;
+                }
                 case EvtFinish:
                 {
-                    r.ReadValueSafe(out float elapsed);
+                    r.ReadValueSafe(out ulong id);
+                    r.ReadValueSafe(out float time);
                     r.ReadValueSafe(out int partCount);
-                    if (RaceTimer.Instance) RaceTimer.Instance.ApplyFinish(elapsed, partCount);
+                    if (RaceTimer.Instance) RaceTimer.Instance.ApplyFinish(id, time, partCount);
+                    break;
+                }
+                case EvtPhase:
+                    ReadPhase(r, RaceTimer.Instance);
+                    break;
+                case EvtBuildReady:
+                    ReadBuildReady(r, RaceTimer.Instance);
+                    break;
+                case EvtEject:
+                {
+                    r.ReadValueSafe(out ushort vehicleIndex);
+                    r.ReadValueSafe(out ulong id);
+                    r.ReadValueSafe(out Vector3 fling);
+                    var a = World.Get(id);
+                    var v = VehicleAt(vehicleIndex);
+                    if (a != null && a.Driving == v) World.ApplyEject(a, fling);
+                    else if (v != null) World.ApplyExitVehicle(v);
                     break;
                 }
             }
@@ -667,13 +845,23 @@ namespace JunkRace
 
         void OnFull(ulong sender, FastBufferReader r)
         {
-            r.ReadValueSafe(out float elapsed);
-            r.ReadValueSafe(out bool finished);
-            r.ReadValueSafe(out int partsAtFinish);
-            if (RaceTimer.Instance && elapsed >= 0f)
+            r.ReadValueSafe(out int routeSeed);
+            r.ReadValueSafe(out int players);
+            if (RouteGenerator.Instance != null) RouteGenerator.Instance.ApplySeed(routeSeed, players);
+
+            r.ReadValueSafe(out bool hasTimer);
+            if (hasTimer)
             {
-                if (finished) RaceTimer.Instance.ApplyFinish(elapsed, partsAtFinish);
-                else RaceTimer.Instance.ApplyStart(elapsed);
+                ReadPhase(r, RaceTimer.Instance);
+                ReadBuildReady(r, RaceTimer.Instance);
+                r.ReadValueSafe(out int done);
+                for (int i = 0; i < done; i++)
+                {
+                    r.ReadValueSafe(out ulong id);
+                    r.ReadValueSafe(out float time);
+                    r.ReadValueSafe(out int partCount);
+                    if (RaceTimer.Instance) RaceTimer.Instance.ApplyFinish(id, time, partCount);
+                }
             }
 
             r.ReadValueSafe(out int revealedCount);
@@ -684,6 +872,14 @@ namespace JunkRace
                 r.ReadValueSafe(out Quaternion rot);
                 var p = PartAt(partIndex);
                 if (p != null) p.Reveal(pos, rot, Vector3.zero);
+            }
+
+            r.ReadValueSafe(out int flippedCount);
+            for (int i = 0; i < flippedCount; i++)
+            {
+                r.ReadValueSafe(out ushort hullIndex);
+                var hp = PartAt(hullIndex);
+                if (hp != null && hp.TryGetComponent(out HullFlip hf)) hf.ApplyFlipped(true);
             }
 
             r.ReadValueSafe(out int attachCount);
@@ -722,6 +918,19 @@ namespace JunkRace
                 r.ReadValueSafe(out ushort seatIndex);
                 if (PartAt(seatIndex) is SeatPart seat) World.ApplySit(World.Get(id), seat);
             }
+
+            r.ReadValueSafe(out int ownedCount);
+            for (int i = 0; i < ownedCount; i++)
+            {
+                r.ReadValueSafe(out ushort vehicleIndex);
+                r.ReadValueSafe(out ulong owner);
+                var v = VehicleAt(vehicleIndex);
+                if (v != null) v.ApplyOwner(owner);
+            }
+
+            // Свалка разложена, всё состояние получено — прогреваем шейдеры и сообщаем хосту «готов».
+            if (RaceTimer.Instance != null) RaceTimer.Instance.ClientPrepare(() => SendSimpleRequest(ReqReady));
+            else SendSimpleRequest(ReqReady);
         }
 
         void OnPoses(ulong sender, FastBufferReader r)

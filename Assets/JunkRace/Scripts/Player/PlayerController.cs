@@ -57,6 +57,10 @@ namespace JunkRace
             if (cameraTransform == null && Camera.main) cameraTransform = Camera.main.transform;
             if (cameraTransform) followCamera = cameraTransform.GetComponent<FollowCamera>();
             World.Local = this;
+            // Свой цвет — по номеру в сети, как тебя видят остальные (соло — жёлтый).
+            var nm = Unity.Netcode.NetworkManager.Singleton;
+            ulong myId = nm != null && nm.IsListening ? nm.LocalClientId : 0UL;
+            CharacterVisual.Attach(transform, CharacterVisual.PlayerColor(myId));
         }
 
         void OnDestroy()
@@ -67,22 +71,46 @@ namespace JunkRace
 
         void Update()
         {
-            if (InGameMenu.IsOpen) return;
+            if (RaceTimer.IsLoading)
+            {
+                if (!InVehicle) Move(false);   // экран загрузки: стоим (но не висим в воздухе)
+                return;
+            }
+            // G — «Готов» на сборке (и пешком, и за рулём).
+            if (!InGameMenu.IsOpen && Controls.Ready.WasPressedThisFrame()
+                && RaceTimer.Instance != null && RaceTimer.Instance.Phase == MatchPhase.Build)
+                World.RequestBuildReady(!RaceTimer.Instance.IsBuildReady(World.LocalId));
+
+            if (InGameMenu.IsOpen)
+            {
+                // Кооп: мир идёт — стоим на месте, но падаем, если были в прыжке.
+                if (!InVehicle && GameSession.Mode != GameMode.Solo) Move(false);
+                return;
+            }
 
             if (InVehicle)
             {
-                if (driving != null && Controls.Flip.WasPressedThisFrame()) World.RequestFlip();
+                // Сброс — водителю, а пассажиру — если за рулём никого (лёг на бок, вышел, сел обратно в кресло).
+                if (Controls.Flip.WasPressedThisFrame() && (driving != null || (seat != null && seat.Vehicle != null && !seat.Vehicle.HasDriver)))
+                    World.RequestFlip();
                 if (Controls.Exit.WasPressedThisFrame()) World.RequestExit();
                 return;
             }
 
             Move();
+            if (RaceTimer.InteractionLocked) return;   // ждём остальных: бегать можно, садиться и вертеть — нет
             if (Controls.Enter.WasPressedThisFrame()) TryEnterVehicle();
+            if (Controls.Rotate.WasPressedThisFrame() && carry != null)
+            {
+                // R: перевернуть корпус (в руках или под прицелом) — стол ножками вверх или вниз.
+                var target = carry.Held != null ? carry.Held : carry.LookTarget;
+                if (target != null && target.TryGetComponent(out HullFlip flip)) World.RequestFlipHull(flip);
+            }
         }
 
-        void Move()
+        void Move(bool allowInput = true)
         {
-            Vector2 input = Controls.Move.ReadValue<Vector2>();
+            Vector2 input = allowInput ? Controls.Move.ReadValue<Vector2>() : Vector2.zero;
             Vector3 fwd = Vector3.forward, right = Vector3.right;
             if (cameraTransform)
             {
@@ -101,7 +129,7 @@ namespace JunkRace
             if (cc.isGrounded)
             {
                 if (verticalVelocity < 0f) verticalVelocity = -2f;
-                if (Controls.Jump.WasPressedThisFrame()) verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
+                if (allowInput && Controls.Jump.WasPressedThisFrame()) verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
             }
             verticalVelocity += gravity * Time.deltaTime;
 
@@ -118,29 +146,43 @@ namespace JunkRace
 
             // Сначала — кресло, на которое смотришь. Иначе водительское место (оно в центре корпуса)
             // почти всегда ближе, и F сажал за руль вместо кресла.
-            if (carry != null && carry.LookTarget is SeatPart aimed && aimed.CanSit)
+            if (carry != null && carry.LookTarget is SeatPart aimed)
             {
-                World.RequestSit(aimed);
-                return;
+                // Кресло водителя — за руль этой машины.
+                if (aimed.IsDriverChair && !aimed.Vehicle.HasDriver && !aimed.Vehicle.RootPart.IsCarried && aimed.Vehicle.MayUse(World.LocalId))
+                {
+                    World.RequestEnter(aimed.Vehicle);
+                    return;
+                }
+                if (aimed.CanSit)
+                {
+                    World.RequestSit(aimed);
+                    return;
+                }
             }
 
             Vehicle bestVehicle = null;
             SeatPart bestSeat = null;
             float bestDist = enterRadius;
-            foreach (var v in FindObjectsByType<Vehicle>(FindObjectsSortMode.None))
+            // Своя машина без водителя — сначала за руль: иначе у машины на боку кресло оказывалось ближе
+            // места водителя, F сажал пассажиром, и сброс (R) не работал.
+            foreach (var v in Vehicle.All)
             {
-                if (v.HasDriver || v.RootPart.IsCarried || v.RootPart.IsHidden) continue;
-                float d = Vector3.Distance(transform.position, v.Seat.position);
-                if (d < bestDist) { bestDist = d; bestVehicle = v; bestSeat = null; }
+                if (v.HasDriver || v.RootPart.IsCarried || v.RootPart.IsHidden || !v.MayUse(World.LocalId)) continue;
+                float d = Mathf.Min(Vector3.Distance(transform.position, v.Seat.position),
+                                    Vector3.Distance(transform.position, v.transform.position));
+                if (d < bestDist) { bestDist = d; bestVehicle = v; }
             }
+            if (bestVehicle != null) { World.RequestEnter(bestVehicle); return; }
+
+            bestDist = enterRadius;
             foreach (var s in FindObjectsByType<SeatPart>(FindObjectsSortMode.None))
             {
                 if (!s.CanSit) continue;
                 float d = Vector3.Distance(transform.position, s.SitPoint.position);
-                if (d < bestDist) { bestDist = d; bestSeat = s; bestVehicle = null; }
+                if (d < bestDist) { bestDist = d; bestSeat = s; }
             }
             if (bestSeat != null) World.RequestSit(bestSeat);
-            else if (bestVehicle != null) World.RequestEnter(bestVehicle);
         }
 
         public void Teleport(Vector3 position)
@@ -154,6 +196,21 @@ namespace JunkRace
         // ---- Вызывается из World.Apply* ----
 
         public void SetHeld(Part part) => carry.Held = part;
+
+        public void Fling(Vector3 velocity)
+        {
+            if (InVehicle) return;
+            // Выбросило вперёд по ходу: отодвигаем от машины, чтобы не застрять в корпусе.
+            Vector3 flat = new Vector3(velocity.x, 0f, velocity.z);
+            if (flat.sqrMagnitude > 0.01f)
+            {
+                cc.enabled = false;
+                transform.position += flat.normalized * 1.5f + Vector3.up * 0.8f;
+                cc.enabled = true;
+            }
+            verticalVelocity = Mathf.Max(verticalVelocity, velocity.y);
+            knockback = Vector3.ClampMagnitude(flat, 20f);
+        }
 
         public void SetSeat(SeatPart s, Vector3 fling)
         {
@@ -205,8 +262,13 @@ namespace JunkRace
                 var v = driving;
                 driving = null;
                 transform.SetParent(null, true);
-                transform.position = v.transform.position + v.transform.right * 2f + Vector3.up;
-                transform.rotation = Quaternion.Euler(0f, v.transform.eulerAngles.y, 0f);
+                // Вбок по горизонтали: у машины на боку её «право» смотрит в небо или в землю.
+                Vector3 side = Vector3.ProjectOnPlane(v.transform.right, Vector3.up);
+                if (side.sqrMagnitude < 0.04f) side = Vector3.ProjectOnPlane(v.transform.up, Vector3.up);
+                side = side.sqrMagnitude > 0.0001f ? side.normalized : Vector3.right;
+                transform.position = v.transform.position + side * 2f + Vector3.up * 1.2f;
+                Vector3 look = Vector3.ProjectOnPlane(v.transform.forward, Vector3.up);
+                transform.rotation = look.sqrMagnitude > 0.0001f ? Quaternion.LookRotation(look) : Quaternion.identity;
                 verticalVelocity = 0f;
                 cc.enabled = true;
                 Controls.SetDriving(false);
@@ -217,10 +279,13 @@ namespace JunkRace
         {
             if (InGameMenu.IsOpen) return;
             if (driving != null)
-                GUI.Label(new Rect(20, Screen.height - 40, 900, 30),
-                    "W/S — газ   A/D — руль   Space — спец   R — сброс на дорогу   F — выйти   V — вид");
+                GUI.Label(new Rect(20, Screen.height - 40, 1100, 30),
+                    "W/S — газ   A/D — руль   Space — спец   R — сброс на дорогу   F — выйти   V — вид"
+                    + (driving.HasDriverChair ? "" : "   · без кресла: стоишь, при ударе вылетишь легче"));
             else if (seat != null)
-                GUI.Label(new Rect(20, Screen.height - 40, 900, 30), "Ты пассажир. Держись!   F — выйти   V — вид");
+                GUI.Label(new Rect(20, Screen.height - 40, 900, 30), seat.Vehicle != null && !seat.Vehicle.HasDriver
+                    ? "Ты пассажир, за рулём никого.   R — сброс на дорогу   F — выйти   V — вид"
+                    : "Ты пассажир. Держись!   F — выйти   V — вид");
         }
     }
 }

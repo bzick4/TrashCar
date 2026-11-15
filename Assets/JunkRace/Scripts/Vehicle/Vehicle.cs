@@ -35,12 +35,41 @@ namespace JunkRace
         [SerializeField] float resetBack = 2f;
         [Tooltip("На какой высоте над землёй поставить машину при сбросе (дальше упадёт на колёса).")]
         [SerializeField] float resetHeight = 1.2f;
+        [Tooltip("Сколько секунд можно пробыть вне трассы (сгенерированный маршрут), прежде чем вернёт.")]
+        [SerializeField] float offRouteDelay = 1.2f;
+
+        [Header("Вылет водителя")]
+        [Tooltip("С какого удара (резкая смена скорости, м/с) водитель может вылететь.")]
+        [SerializeField] float ejectFromDv = 5f;
+        [Tooltip("Удар, после которого водитель в кресле вылетает наверняка.")]
+        [SerializeField] float ejectFullDv = 17f;
+        [Tooltip("Без кресла водитель стоит — вылетает во столько раз чаще.")]
+        [SerializeField] float standingEjectFactor = 1.5f;
+        float ejectCooldown;
+        bool pendingEject;
+        Vector3 ejectFling;
         float airTime;
+        float offRouteTime, routeCheckTimer;
+        bool onRoute = true;
         Vector3 lastSafePosition;
         bool hasSafePosition;
         const float ResetMargin = 3f;   // отступ от ограждений при возврате на трассу
 
         public int TeamId;   // для командного режима, пока не используется
+
+        /// <summary>
+        /// Хозяин машины: каждый игрок строит свою. Первый, кто прикрутил деталь или сел за руль, — хозяин.
+        /// Чужую машину нельзя водить, разбирать и докручивать (пассажиром — можно).
+        /// </summary>
+        public const ulong NoOwner = ulong.MaxValue;
+        public ulong OwnerId { get; private set; } = NoOwner;
+        public bool IsOwned => OwnerId != NoOwner;
+        public void ApplyOwner(ulong id) => OwnerId = id;
+        /// <summary>Этот игрок может водить и строить машину (ничья или его).</summary>
+        public bool MayUse(ulong id) => !IsOwned || OwnerId == id;
+
+        /// <summary>Пересчитать массу и центр масс (корпус перевернули).</summary>
+        public void MarkMassDirty() => massDirty = true;
 
         public Rigidbody Body { get; private set; }
         public Part RootPart { get; private set; }
@@ -79,6 +108,12 @@ namespace JunkRace
         public float DragCoefficient { get; private set; }
         /// <summary>Качество руля 0..1: сумма AsSteering деталей в слотах «Руль», не больше 1.</summary>
         public float SteerQuality { get; private set; }
+        /// <summary>Защита от бортов (ArmorPart в слоте «Борт»), 0..ArmorPart.MaxProtection.</summary>
+        public float Protection { get; private set; }
+        bool armorLeft, armorRight;
+
+        /// <summary>Висит ли боковина на этой стороне (знак side: минус — слева). Колёса отодвигаются от неё.</summary>
+        public bool HasSideArmor(float side) => side < 0f ? armorLeft : armorRight;
         public bool IsGrounded => groundedWheels > 0;
         /// <summary>Сколько колёс держало машину в прошлом шаге (на земле или в воде), минимум 1.</summary>
         public int SupportingWheels => Mathf.Max(1, groundedWheels + paddlingWheels);
@@ -93,6 +128,11 @@ namespace JunkRace
         public void ReportGrounded() => groundedThisStep++;
         /// <summary>Колесо сообщает, что гребёт в воде.</summary>
         public void ReportPaddling() => paddlingThisStep++;
+
+        /// <summary>Все машины на сцене — вместо FindObjectsByType (он перебирает всю сцену).</summary>
+        public static readonly List<Vehicle> All = new List<Vehicle>();
+        void OnEnable() => All.Add(this);
+        void OnDisable() => All.Remove(this);
 
         void Awake()
         {
@@ -123,9 +163,29 @@ namespace JunkRace
             }
         }
 
+        /// <summary>На месте водителя прикручено кресло (иначе водитель стоит).</summary>
+        public bool HasDriverChair
+        {
+            get
+            {
+                foreach (var p in parts) if (p is SeatPart s && s.IsDriverChair) return true;
+                return false;
+            }
+        }
+
+        /// <summary>Шанс вылететь при ударе такой силы (Δv, м/с): в кресле — по силе удара, стоя — в 1.5 раза выше.</summary>
+        public float EjectChance(float dv)
+        {
+            float chance = Mathf.Clamp01((dv - ejectFromDv) / Mathf.Max(0.1f, ejectFullDv - ejectFromDv));
+            if (!HasDriverChair) chance *= standingEjectFactor;
+            return Mathf.Clamp01(chance);
+        }
+
         public void SetDriver(IPartInput driver)
         {
             Driver = driver;
+            ejectCooldown = Time.time + 1f;   // только сел — не выкидываем от толчка при посадке
+            pendingEject = false;
             if (driver != null) AnyDriverEntered?.Invoke(this);
         }
 
@@ -169,6 +229,7 @@ namespace JunkRace
             part.transform.localPosition = Vector3.zero;
             part.transform.localRotation = Quaternion.identity;
             part.SetCollidersEnabled(true);
+            if (point.Slot != SlotType.Wheel) SettleOnHull(part, point);
             part.SetMountedPhysics(true);
 
             point.Occupant = part;
@@ -179,6 +240,46 @@ namespace JunkRace
 
             part.OnAttached();
             PartAttached?.Invoke(part);
+        }
+
+        static readonly RaycastHit[] settleHits = new RaycastHit[16];
+
+        /// <summary>
+        /// Деталь встаёт вплотную на корпус: точка крепления может висеть над полом (модель корпуса
+        /// не совпала с коробками, перевёрнутый корпус) — опускаем деталь, пока низом не коснётся
+        /// своего корпуса (не дальше 0.6 м). Одинаково у хоста и клиентов: геометрия у всех одна.
+        /// </summary>
+        void SettleOnHull(Part part, AttachPoint point)
+        {
+            var owner = point.Owner;
+            if (owner == null) return;
+            Physics.SyncTransforms();
+
+            bool any = false;
+            Bounds b = default;
+            foreach (var c in part.GetComponentsInChildren<Collider>())
+            {
+                if (!c.enabled || c.isTrigger || c.GetComponentInParent<Part>() != part) continue;
+                if (!any) { b = c.bounds; any = true; } else b.Encapsulate(c.bounds);
+            }
+            if (!any) return;
+
+            Vector3 down = -point.transform.up;
+            // Луч из центра детали вниз; низ детали — по её рамке вдоль «вниз» точки.
+            Vector3 from = b.center;
+            float toBottom = Mathf.Abs(Vector3.Dot(b.extents, new Vector3(Mathf.Abs(down.x), Mathf.Abs(down.y), Mathf.Abs(down.z))));
+            const float maxGap = 0.6f;
+            int n = Physics.RaycastNonAlloc(from, down, settleHits, toBottom + maxGap, ~0, QueryTriggerInteraction.Ignore);
+            float best = float.MaxValue;
+            for (int i = 0; i < n; i++)
+            {
+                var h = settleHits[i];
+                if (h.collider.GetComponentInParent<Part>() != owner) continue;   // только свой корпус
+                if (h.distance < best) best = h.distance;
+            }
+            if (best == float.MaxValue) return;
+            float gap = best - toBottom;
+            if (gap > 0.01f && gap <= maxGap) part.transform.position += down * gap;
         }
 
         /// <summary>Оторвать (только авторитет).</summary>
@@ -240,6 +341,23 @@ namespace JunkRace
         public void Flip()
         {
             if (!Authority.IsAuthority) return;
+
+            // Сгенерированный маршрут: ближайшая дорога, назад по ней, носом вдоль дороги.
+            var route = RouteMap.Current;
+            if (route != null)
+            {
+                Vector3 start = Body.position;
+                if ((start.y < fallResetY || route.IsOff(start)) && hasSafePosition) start = lastSafePosition;
+                if (route.ResetPose(start, resetBack, ResetMargin, out Vector3 rp, out Vector3 rf))
+                {
+                    // Высота дороги известна из маршрута — не лучом (луч зацепит дерево или валун на дороге).
+                    PlaceForReset(new Vector3(rp.x, rp.y + resetHeight, rp.z), rf);
+                    onRoute = true;
+                    offRouteTime = 0f;
+                    return;
+                }
+            }
+
             var track = TrackBounds.Instance;
             Vector3 fwd;
             if (track != null) fwd = track.Forward;
@@ -264,9 +382,24 @@ namespace JunkRace
             }
             if (!found) surface = Mathf.Max(target.y, 0f);
             target.y = surface + resetHeight;
+            PlaceForReset(target, fwd);
+        }
 
-            Body.position = target;
-            Body.rotation = Quaternion.LookRotation(fwd, Vector3.up);
+        /// <summary>Поставить машину в точку (стартовая решётка): на землю под ней, носом по forward.</summary>
+        public void PlaceAt(Vector3 point, Vector3 forward)
+        {
+            if (!Authority.IsAuthority) return;
+            float surface = FindResetSurface(point, out bool found);
+            if (!found) surface = point.y;
+            PlaceForReset(new Vector3(point.x, surface + resetHeight, point.z), forward);
+            onRoute = true;
+            offRouteTime = 0f;
+        }
+
+        void PlaceForReset(Vector3 position, Vector3 forward)
+        {
+            Body.position = position;
+            Body.rotation = Quaternion.LookRotation(forward, Vector3.up);
             Body.linearVelocity = Vector3.zero;
             Body.angularVelocity = Vector3.zero;
             airTime = 0f;
@@ -314,8 +447,37 @@ namespace JunkRace
 
             if (massDirty) RecalculateMass();
 
+            // Водителя выбросило ударом (решено в OnCollisionEnter; выходить из машины посреди коллбэка физики нельзя).
+            if (pendingEject)
+            {
+                pendingEject = false;
+                if (HasDriver) World.ServerEjectDriver(this, ejectFling);
+            }
+
             // Упала за край — сама на трассу. Пока стоит колёсами на трассе — запоминаем место.
+            var route = RouteMap.Current;
             if (Body.position.y < fallResetY) Flip();
+            else if (route != null)
+            {
+                // Открытый мир: проверяем раз в 0.2 с (поиск по маршруту не бесплатный).
+                routeCheckTimer -= dt;
+                if (routeCheckTimer <= 0f)
+                {
+                    routeCheckTimer = 0.2f;
+                    onRoute = !route.IsOff(Body.position);
+                }
+                if (onRoute)
+                {
+                    offRouteTime = 0f;
+                    if (groundedWheels > 0) { lastSafePosition = Body.position; hasSafePosition = true; }
+                }
+                else if (HasDriver)
+                {
+                    // Срезать не выйдет: уехал далеко или упал с горной дороги — обратно на трассу.
+                    offRouteTime += dt;
+                    if (offRouteTime > offRouteDelay) Flip();
+                }
+            }
             else if (groundedWheels > 0 && (TrackBounds.Instance == null || TrackBounds.Instance.Contains(Body.position, 1f)))
             {
                 lastSafePosition = Body.position;
@@ -328,7 +490,14 @@ namespace JunkRace
             paddlingWheels = paddlingThisStep;
             paddlingThisStep = 0;
             int pushing = groundedWheels + paddlingWheels;
-            float throttle = Input.Throttle;
+            // Отсчёт перед стартом: стоим на решётке, газ не работает.
+            bool hold = RaceTimer.HoldVehicles;
+            float throttle = hold ? 0f : Input.Throttle;
+            if (hold)
+            {
+                Body.linearVelocity = new Vector3(0f, Mathf.Min(Body.linearVelocity.y, 0f), 0f);
+                Body.angularVelocity = Vector3.zero;
+            }
             if (TotalPower > 0f && pushing > 0)
             {
                 // Тяга = мощность / скорость. На старте упирается в сцепление колёс (они сами обрежут).
@@ -374,7 +543,8 @@ namespace JunkRace
 
         void RecalculateMass()
         {
-            float total = 0f, power = 0f, drag = 0f, steer = 0f;
+            float total = 0f, power = 0f, drag = 0f, steer = 0f, protection = 0f;
+            armorLeft = armorRight = false;
             Vector3 com = Vector3.zero;
             foreach (var p in parts)
             {
@@ -384,9 +554,17 @@ namespace JunkRace
                 drag += p.AirDrag;
                 if (p.GivesPowerIn(p.Slot)) power += p.AsEnginePower;
                 if (p.Slot == SlotType.Steering) steer += p.AsSteering;
+                float prot = ArmorPart.ProtectionOf(p, p.Slot);
+                if (prot > 0f)
+                {
+                    protection += prot;
+                    float x = transform.InverseTransformPoint(p.MountedOn.transform.position).x;
+                    if (x < -0.1f) armorLeft = true; else if (x > 0.1f) armorRight = true;
+                }
             }
             TotalPower = power;
             SteerQuality = Mathf.Clamp01(steer);
+            Protection = Mathf.Clamp(protection, 0f, ArmorPart.MaxProtection);
             DragCoefficient = drag;
             Body.mass = Mathf.Max(1f, total);
             // Центр масс — по весу деталей, а не по объёму коллайдеров (как считает Unity):
@@ -436,10 +614,26 @@ namespace JunkRace
                 var contact = collision.GetContact(i);
                 var part = contact.thisCollider.GetComponentInParent<Part>();
                 if (part == null || part == RootPart || part.Vehicle != this) continue;
-                if (impulse < part.BreakImpulse) continue;
+                // Борта прикрывают остальные детали; сами борта принимают удар на себя.
+                float need = part is ArmorPart ? part.BreakImpulse : part.BreakImpulse * ArmorPart.Strength(Protection);
+                if (impulse < need) continue;
 
                 // Отрываем не здесь, а в FixedUpdate: менять иерархию посреди коллбэка физики — к беде.
                 pendingBreaks.Add((part, contact.normal * impulse * 0.02f + Vector3.up * 2f));
+            }
+
+            // Сильный удар — водитель может вылететь. Сила — резкая смена скорости машины (импульс / масса).
+            if (HasDriver && !pendingEject && Time.time >= ejectCooldown && !RaceTimer.HoldVehicles)
+            {
+                float dv = impulse / Mathf.Max(1f, Body.mass);
+                float chance = EjectChance(dv) * (1f - Protection * 0.5f);
+                if (chance > 0f && UnityEngine.Random.value < chance)
+                {
+                    pendingEject = true;
+                    ejectCooldown = Time.time + 1f;
+                    Vector3 n = collision.contactCount > 0 ? collision.GetContact(0).normal : Vector3.up;
+                    ejectFling = Body.linearVelocity * 0.8f + n * 2f + Vector3.up * 5f;
+                }
             }
         }
     }

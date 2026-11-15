@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d77065b5fd9ab4cb4b78525b05bdac56, type: 3}
+  m_Name: "\u0420\u0443\u043B\u044C \u043E\u0442 \u0432\u0435\u043B\u0438\u043A\u0430"
+  m_EditorClassIdentifier: Assembly-CSharp::JunkRace.SteeringDefinition
+  category: 2
+  displayName: "\u0420\u0443\u043B\u044C \u043E\u0442 \u0432\u0435\u043B\u0438\u043A\u0430"
+  mass: 3
+  breakImpulse: 350
+  buoyancy: 0
+  airDrag: 0.05
+  description: "\u0427\u0443\u0432\u0441\u0442\u0432\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0439:
+    \u0447\u0443\u0442\u044C \u0442\u0440\u043E\u043D\u0443\u043B \u2014 \u0443\u0436\u0435
+    \u043F\u043E\u0432\u043E\u0440\u043E\u0442."
+  yawAccel: 2.6

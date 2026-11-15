@@ -138,13 +138,14 @@ namespace JunkRace
             if (!firstPerson || player.InVehicle)
             {
                 // Большое (корпус с деталями) держим подальше, чтобы не проходило сквозь игрока.
-                hp.localPosition = holdDefaultPos + Vector3.forward * Mathf.Max(0f, carry.HeldRadius - 0.6f);
+                hp.localPosition = carry.Held != null ? PlayerCarry.HoldOffset(carry.HeldRadius) : holdDefaultPos;
                 hp.localRotation = Quaternion.identity;
                 return;
             }
-            float dist = 1.0f + carry.HeldRadius;
+            // От первого лица — тоже у рук, но пониже центра экрана: прицел и дорога видны.
+            float dist = PlayerCarry.HandReach + 0.1f + carry.HeldRadius;
             float holdPitch = Mathf.Clamp(pitch, -30f, 50f);
-            hp.localPosition = Vector3.up * eyeHeight + Quaternion.Euler(holdPitch, 0f, 0f) * new Vector3(0f, -0.45f, dist);
+            hp.localPosition = Vector3.up * eyeHeight + Quaternion.Euler(holdPitch, 0f, 0f) * new Vector3(0f, -0.55f, dist);
             hp.localRotation = Quaternion.identity;   // деталь держим ровно: так проще сравнить с «призраком»
         }
 

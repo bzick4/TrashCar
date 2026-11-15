@@ -1,0 +1,32 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 74040e93ecee1439884a9442fbeff794, type: 3}
+  m_Name: "\u041A\u043E\u043B\u0435\u0441\u043E \u043A\u0432\u0430\u0434\u0440\u043E\u0446\u0438\u043A\u043B\u0430"
+  m_EditorClassIdentifier: Assembly-CSharp::JunkRace.WheelDefinition
+  category: 1
+  displayName: "\u041A\u043E\u043B\u0435\u0441\u043E \u043A\u0432\u0430\u0434\u0440\u043E\u0446\u0438\u043A\u043B\u0430"
+  mass: 11
+  breakImpulse: 600
+  buoyancy: 0
+  airDrag: 0.05
+  description: "\u0414\u0435\u0440\u0436\u0438\u0442 \u0434\u043E\u0440\u043E\u0433\u0443.
+    \u041F\u043E\u0447\u0442\u0438."
+  radius: 0.45
+  suspension: 0.25
+  spring: 4000
+  damper: 350
+  traction: 900
+  grip: 750
+  steerable: 1
+  maxSteerAngle: 30
+  rollingResistance: 3
+  paddle: 0.5

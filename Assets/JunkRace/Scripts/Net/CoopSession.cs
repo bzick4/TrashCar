@@ -31,8 +31,18 @@ namespace JunkRace
     [RequireComponent(typeof(NetworkManager), typeof(UnityTransport))]
     public class CoopSession : MonoBehaviour
     {
-        public const int MinPasswordLength = 8;   // ограничение Unity: пароль сессии 8–64 символа
+        /// <summary>
+        /// Минимум для игрока. У Unity пароль сессии — от 8 символов, поэтому к введённому добавляем
+        /// постоянную приставку (SessionPassword): хост и клиенты делают это одинаково.
+        /// </summary>
+        public const int MinPasswordLength = 4;
+        public const int MaxPasswordLength = 32;
+        const string PasswordPrefix = "JunkRace:";
+
+        static string SessionPassword(string password) =>
+            string.IsNullOrEmpty(password) ? null : PasswordPrefix + password;
         const string NameKey = "name";
+        const string ReadyKey = "ready";
         const string PasswordFlagKey = "pw";
         const float StartCountdown = 3f;
 
@@ -46,6 +56,26 @@ namespace JunkRace
         public string ServerName => session != null ? session.Name : "";
         public string JoinCode => session != null ? session.Code : "";
         public IReadOnlyList<string> Players => players;
+        /// <summary>Готовность игроков лобби — в том же порядке, что Players (хост первым).</summary>
+        public IReadOnlyList<bool> PlayersReady => playersReady;
+        readonly List<bool> playersReady = new List<bool>();
+        /// <summary>Я нажал «Готов» (сразу, не дожидаясь ответа сервиса).</summary>
+        public bool LocalReady { get; private set; }
+        /// <summary>Все в лобби нажали «Готов».</summary>
+        public bool AllReady { get; private set; }
+
+        /// <summary>«Готов» / «Не готов» в лобби: пишем в свойства своего игрока сессии — видят все.</summary>
+        public async void SetReady(bool ready)
+        {
+            if (session == null || Current != State.InLobby) return;
+            LocalReady = ready;
+            try
+            {
+                session.CurrentPlayer.SetProperty(ReadyKey, new PlayerProperty(ready ? "1" : "0", VisibilityPropertyOptions.Member));
+                await session.SaveCurrentPlayerDataAsync();
+            }
+            catch (Exception e) { Debug.LogWarning($"[JunkRace] Готовность не сохранилась: {e.Message}"); }
+        }
         /// <summary>Секунд до старта, -1 — отсчёта нет.</summary>
         public float CountdownLeft { get; private set; } = -1f;
 
@@ -150,13 +180,13 @@ namespace JunkRace
                     Name = string.IsNullOrWhiteSpace(serverName) ? $"Сервер {playerName}" : serverName.Trim(),
                     MaxPlayers = GameSession.CoopMaxPlayers,
                     IsPrivate = false,
-                    Password = hasPassword ? password : null,
+                    Password = SessionPassword(password),
                     PlayerProperties = NameProperty(playerName),
                     SessionProperties = new Dictionary<string, SessionProperty>
                     {
                         { PasswordFlagKey, new SessionProperty(hasPassword ? "1" : "0", VisibilityPropertyOptions.Public) },
                     },
-                }.WithRelayNetwork();
+                }.WithRelayNetwork().WithNetworkOptions(RelayUdp());
 
                 session = await MultiplayerService.Instance.CreateSessionAsync(options);
                 OnJoined();
@@ -192,11 +222,24 @@ namespace JunkRace
             catch (Exception e) { Fail(Friendly(e)); }
         }
 
-        /// <summary>Хост: начать, не дожидаясь 4 игроков (для тестов).</summary>
+        /// <summary>Сколько игроков в сессии (вошли в лобби, даже если ещё не подключились по сети).</summary>
+        public int SessionPlayerCount => session != null ? session.PlayerCount : 0;
+
+        bool forceStart;
+        /// <summary>Хост нажал «Начать сейчас», ждём, пока все из лобби подключатся по сети.</summary>
+        public bool StartPending => forceStart;
+
+        /// <summary>
+        /// Хост: начать, не дожидаясь 4 игроков (для тестов). Но только когда все, кто уже в лобби,
+        /// подключились по сети — иначе игрок, зашедший в лобби секунду назад, опоздает к старту.
+        /// </summary>
         public void ForceStart()
         {
-            if (IsHost && Current == State.InLobby) StartGame();
+            if (IsHost && Current == State.InLobby) forceStart = true;
         }
+
+        /// <summary>Все игроки лобби уже на связи (хост — тоже в списке подключений).</summary>
+        bool AllConnected => nm != null && nm.IsServer && session != null && nm.ConnectedClientsIds.Count >= session.PlayerCount;
 
         public async void Leave() => await LeaveAsync();
 
@@ -230,27 +273,33 @@ namespace JunkRace
             if (session == null) return;
 
             players.Clear();
+            playersReady.Clear();
+            bool allReady = session.PlayerCount > 0;
             foreach (var p in session.Players)
             {
                 string playerName = NameOf(p);
-                if (p.Id == session.Host) players.Insert(0, playerName);   // хост первым
-                else players.Add(playerName);
+                bool ready = IsReady(p);
+                if (!ready) allReady = false;
+                if (p.Id == session.Host) { players.Insert(0, playerName); playersReady.Insert(0, ready); }   // хост первым
+                else { players.Add(playerName); playersReady.Add(ready); }
             }
+            AllReady = allReady;
 
             if (Current != State.InLobby) return;
 
-            bool full = session.PlayerCount >= GameSession.CoopMaxPlayers;
-            if (!full) CountdownLeft = -1f;
+            // Все нажали «Готов» и все на связи — короткий отсчёт и общий старт. Кто-то передумал — отсчёт сброшен.
+            bool go = (allReady || forceStart) && AllConnected;
+            if (!go) CountdownLeft = -1f;
             else if (CountdownLeft < 0f) CountdownLeft = StartCountdown;
             else CountdownLeft = Mathf.Max(0f, CountdownLeft - Time.unscaledDeltaTime);
 
-            // Стартуем, когда отсчёт кончился и все реально подключились по сети.
-            if (IsHost && full && CountdownLeft <= 0f && nm.IsServer && nm.ConnectedClientsIds.Count >= session.PlayerCount)
+            if (IsHost && go && CountdownLeft <= 0f)
                 StartGame();
         }
 
         void StartGame()
         {
+            forceStart = false;
             if (startRequested) return;
             startRequested = true;
             CountdownLeft = -1f;
@@ -324,6 +373,10 @@ namespace JunkRace
             players.Clear();
             CountdownLeft = -1f;
             startRequested = false;
+            forceStart = false;
+            LocalReady = false;
+            AllReady = false;
+            playersReady.Clear();
         }
 
         void Unsubscribe()
@@ -338,9 +391,16 @@ namespace JunkRace
 
         static JoinSessionOptions JoinOptions(string playerName, string password) => new JoinSessionOptions
         {
-            Password = string.IsNullOrEmpty(password) ? null : password,
+            Password = SessionPassword(password),
             PlayerProperties = NameProperty(playerName),
-        };
+        }.WithNetworkOptions(RelayUdp());
+
+        /// <summary>
+        /// Relay по обычному UDP, без шифрования (DTLS). DTLS в Unity Transport собирается Burst'ом,
+        /// и в редакторе на Mac сборка падает («Burst failed to compile … SendCallback»). Для игры шифрование
+        /// не нужно. Протокол у хоста и клиентов обязан совпадать.
+        /// </summary>
+        static NetworkOptions RelayUdp() => new NetworkOptions { RelayProtocol = RelayProtocol.UDP };
 
         static Dictionary<string, PlayerProperty> NameProperty(string playerName)
         {
@@ -349,8 +409,12 @@ namespace JunkRace
             return new Dictionary<string, PlayerProperty>
             {
                 { NameKey, new PlayerProperty(n, VisibilityPropertyOptions.Member) },
+                { ReadyKey, new PlayerProperty("0", VisibilityPropertyOptions.Member) },
             };
         }
+
+        static bool IsReady(IReadOnlyPlayer p) =>
+            p.Properties != null && p.Properties.TryGetValue(ReadyKey, out var prop) && prop != null && prop.Value == "1";
 
         static string NameOf(IReadOnlyPlayer p)
         {

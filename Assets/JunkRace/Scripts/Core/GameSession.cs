@@ -30,6 +30,31 @@ namespace JunkRace
             SceneManager.LoadScene(TrackScene);
         }
 
+        /// <summary>Хост (или соло) может перезапустить заезд.</summary>
+        public static bool CanRestart
+        {
+            get
+            {
+                var nm = NetworkManager.Singleton;
+                return nm == null || !nm.IsListening || nm.IsServer;
+            }
+        }
+
+        /// <summary>
+        /// Ещё заезд: трасса заново (новый сид, кучи и детали по-новому). В коопе хост грузит сцену всем
+        /// через сетевой менеджер сцен — клиенты перезагружаются вместе с ним.
+        /// </summary>
+        public static void RestartTrack()
+        {
+            if (!CanRestart) return;
+            Time.timeScale = 1f;
+            var nm = NetworkManager.Singleton;
+            if (nm != null && nm.IsListening && nm.SceneManager != null)
+                nm.SceneManager.LoadScene(TrackScene, LoadSceneMode.Single);
+            else
+                SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+        }
+
         /// <summary>Выход в меню из любого места. Глушит сеть и убирает NetworkManager, чтобы в меню не было дубля.</summary>
         public static void ReturnToMenu(string message = null)
         {

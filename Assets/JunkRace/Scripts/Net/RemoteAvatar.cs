@@ -8,11 +8,6 @@ namespace JunkRace
     /// </summary>
     public class RemoteAvatar : MonoBehaviour, IAvatar
     {
-        static readonly Color[] Colors =
-        {
-            new Color(0.2f, 0.6f, 1f), new Color(0.3f, 0.9f, 0.4f),
-            new Color(0.9f, 0.3f, 0.9f), new Color(1f, 0.9f, 0.2f),
-        };
 
         public ulong ClientId { get; private set; }
         public string DisplayName { get; set; }
@@ -33,12 +28,14 @@ namespace JunkRace
             // Как у локального игрока: 1.7 м, 0.6 м в ширину. Корень не масштабируем — только вид.
             var go = new GameObject($"Remote_{clientId}_{displayName}");
             var body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            body.name = "Тело";
             Destroy(body.GetComponent<Collider>());
             body.transform.SetParent(go.transform, false);
             body.transform.localScale = new Vector3(0.6f, 0.85f, 0.6f);
-            Paint(body, Colors[(int)(clientId % (ulong)Colors.Length)]);
+            Paint(body, CharacterVisual.PlayerColor(clientId));
 
             var nose = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            nose.name = "Нос";
             Destroy(nose.GetComponent<Collider>());
             nose.transform.SetParent(go.transform, false);
             nose.transform.localPosition = new Vector3(0f, 0.45f, 0.3f);
@@ -52,10 +49,17 @@ namespace JunkRace
             avatar.HoldPoint.SetParent(go.transform, false);
             avatar.HoldPoint.localPosition = new Vector3(0f, 0.3f, 1.5f);
             go.transform.position = new Vector3(0f, -100f, 0f);   // до первой позиции прячем
+            CharacterVisual.Attach(go.transform, CharacterVisual.PlayerColor(clientId));   // человечек своего цвета — как у него самого
             return avatar;
         }
 
-        public void SetHeld(Part part) => Held = part;
+        public void SetHeld(Part part)
+        {
+            Held = part;
+            // Держит у рук — как у себя самого (PlayerCarry.HoldOffset).
+            if (HoldPoint != null)
+                HoldPoint.localPosition = part != null ? PlayerCarry.HoldOffset(PlayerCarry.RadiusOf(part)) : new Vector3(0f, 0.3f, 1.5f);
+        }
 
         public void SetDriving(Vehicle vehicle)
         {
@@ -75,6 +79,9 @@ namespace JunkRace
                 NetInput.Special = false;
             }
         }
+
+        /// <summary>Куда полетел — пришлёт его же клиент позой.</summary>
+        public void Fling(Vector3 velocity) { }
 
         public void SetSeat(SeatPart seat, Vector3 fling)
         {
@@ -125,7 +132,10 @@ namespace JunkRace
 
         static void Paint(GameObject go, Color color)
         {
-            var shader = Shader.Find("JunkRace/Toon");
+            var shader = Shader.Find("Toon Shaders Pro/URP/Toon");
+            // Этот шейдер умножает на цвет дважды — компенсируем корнем.
+            if (shader != null) color = new Color(Mathf.Sqrt(color.r), Mathf.Sqrt(color.g), Mathf.Sqrt(color.b), color.a);
+            if (shader == null) shader = Shader.Find("JunkRace/Toon");
             if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
             if (shader == null) shader = Shader.Find("Standard");
             go.GetComponent<Renderer>().material = new Material(shader) { color = color };

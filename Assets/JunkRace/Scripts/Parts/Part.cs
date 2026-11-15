@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace JunkRace
 {
-    public enum PartCategory { Hull, Drive, Control, Special }
+    public enum PartCategory { Hull, Drive, Control, Special, Armor }
 
     /// <summary>
     /// Любая деталь со свалки. В свободном состоянии у неё свой Rigidbody.
@@ -17,6 +17,8 @@ namespace JunkRace
     /// </summary>
     public class Part : MonoBehaviour
     {
+        [Tooltip("Описание детали (ассет). Если задано — характеристики берутся оттуда при старте.")]
+        [SerializeField] PartDefinition definition;
         [SerializeField] PartCategory category = PartCategory.Special;
         [SerializeField] string displayName = "Хлам";
         [Tooltip("Масса детали, кг. Складывается в массу машины.")]
@@ -30,6 +32,7 @@ namespace JunkRace
         [Tooltip("Смешное описание для карточки детали.")]
         [SerializeField, TextArea] string description = "";
 
+        public PartDefinition Definition => definition;
         public PartCategory Category => category;
         public string DisplayName => displayName;
         public float Mass => mass;
@@ -38,7 +41,7 @@ namespace JunkRace
         public float AirDrag => airDrag;
         public string Description => description;
 
-        static readonly string[] CategoryNames = { "Корпус", "Движение", "Управление", "Спец" };
+        static readonly string[] CategoryNames = { "Корпус", "Движение", "Управление", "Спец", "Защита" };
         public string CategoryName => CategoryNames[(int)category];
 
         /// <summary>Строки характеристик для карточки. Наследники добавляют свои.</summary>
@@ -171,6 +174,9 @@ namespace JunkRace
 
         protected virtual void Awake()
         {
+            // Значения из ассета-описания — первым делом, до того как кто-то прочитает массу и прочее.
+            if (definition != null) definition.ApplyTo(this);
+
             // Кешируем ДО любых прикреплений, чтобы не схватить коллайдеры чужих деталей.
             // Только свои: в сцене к корпусу могут быть уже прикручены детали (колёсики тележки).
             var cols = new List<Collider>();
@@ -182,7 +188,12 @@ namespace JunkRace
                 if (ap.GetComponentInParent<Part>() == this) pts.Add(ap);
             Points = pts.ToArray();
             if (TryGetComponent(out Rigidbody rb)) rb.mass = mass;
+            RefreshShape();
+        }
 
+        /// <summary>Радиус «хлама-колеса» и точки плавучести по коллайдерам (заново — когда корпус перевернули).</summary>
+        public void RefreshShape()
+        {
             // Радиус «колеса» для хлама: от точки крепления до низа детали.
             bool any = false;
             Bounds b = default;

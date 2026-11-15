@@ -37,7 +37,7 @@ namespace JunkRace
             get
             {
                 int n = 0;
-                foreach (var p in stash) if (p != null && p.IsHidden) n++;
+                foreach (var p in stash) if (p != null && p.IsHidden && p.gameObject.activeSelf) n++;
                 return n;
             }
         }
@@ -63,6 +63,20 @@ namespace JunkRace
             topY = any ? b.max.y : transform.position.y + 1f;
         }
 
+        /// <summary>Деталь спрятана в этой куче с начала заезда.</summary>
+        public bool Holds(Part part) => stash.Contains(part);
+
+        /// <summary>Раскладка при запуске: спрятать деталь в эту кучу.</summary>
+        public void Stash(Part part)
+        {
+            if (part == null || stash.Contains(part)) return;
+            stash.Add(part);
+            part.Hide(ParkPosition);
+        }
+
+        /// <summary>Перед новой раскладкой: то, что положил сборщик сцены, не в счёт.</summary>
+        public void ClearStash() => stash.Clear();
+
         void OnEnable() => All.Add(this);
         void OnDisable() => All.Remove(this);
 
@@ -85,7 +99,7 @@ namespace JunkRace
         public Part Roll()
         {
             candidates.Clear();
-            foreach (var p in stash) if (p != null && p.IsHidden) candidates.Add(p);
+            foreach (var p in stash) if (p != null && p.IsHidden && p.gameObject.activeSelf) candidates.Add(p);
             if (candidates.Count == 0 || Random.value > findChance) return null;
             return candidates[Random.Range(0, candidates.Count)];
         }
