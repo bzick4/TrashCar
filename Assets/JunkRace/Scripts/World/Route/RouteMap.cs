@@ -49,6 +49,12 @@ namespace JunkRace
         }
 
         /// <summary>Направления — по соседям, чтобы сечения дороги шли плавно.</summary>
+        /// <summary>
+        /// Направление на концах пути, заданное явно (стык развилки): края площадки и веток лежат
+        /// на одной прямой — без щели и «ступеньки» на шве.
+        /// </summary>
+        public Vector3? StartForward, EndForward;
+
         public void SmoothForwards()
         {
             int n = Samples.Count;
@@ -57,6 +63,8 @@ namespace JunkRace
             {
                 Vector3 d = Samples[Mathf.Min(i + 1, n - 1)].Pos - Samples[Mathf.Max(i - 1, 0)].Pos;
                 d.y = 0f;
+                if (i == 0 && StartForward.HasValue) d = StartForward.Value;
+                if (i == n - 1 && EndForward.HasValue) d = EndForward.Value;
                 if (d.sqrMagnitude < 1e-6f) continue;
                 var s = Samples[i];
                 s.Forward = d.normalized;
@@ -218,7 +226,8 @@ namespace JunkRace
                 along = Mathf.Max(0f, along - 1f);
                 s = path.At(along);
             }
-            float limit = Mathf.Max(0f, s.HalfWidth - edgeMargin);
+            // Ближе к середине: прежнее смещение вбок у развилки ставило машину прямо на край щели между ветками.
+            float limit = Mathf.Min(Mathf.Max(0f, s.HalfWidth - edgeMargin), s.HalfWidth * 0.3f);
             pos = s.Pos + s.Right * Mathf.Clamp(h.Lateral, -limit, limit);
             forward = s.Forward;
             return true;

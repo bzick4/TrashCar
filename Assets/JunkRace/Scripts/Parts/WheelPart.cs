@@ -72,11 +72,47 @@ namespace JunkRace
             {
                 Vector3 down = -Vehicle.transform.up;
                 float drop = suspension;
-                if (GroundCast(transform.position, down, radius + suspension, out var hit))
-                    drop = Mathf.Clamp(hit.distance - radius, 0f, suspension);
+                bool grounded = GroundCast(transform.position, down, radius + suspension, out var hit);
+                if (grounded) drop = Mathf.Clamp(hit.distance - radius, 0f, suspension);
                 visual.localPosition = transform.InverseTransformDirection(down) * drop + InsetTowardHull();
+                KickDust(grounded, hit);
             }
-            else visual.localPosition = Vector3.zero;
+            else { visual.localPosition = Vector3.zero; hasLastPos = false; }
+        }
+
+        Vector3 lastPos;
+        bool hasLastPos;
+        float dustDebt, lastSpeed, dustAccel;
+
+        /// <summary>Пыль из-под колеса: чем быстрее, тем гуще. Скорость — по сдвигу колеса (работает и у клиентов).</summary>
+        void KickDust(bool grounded, RaycastHit hit)
+        {
+            Vector3 p = transform.position;
+            float dt = Time.deltaTime;
+            Vector3 vel = hasLastPos && dt > 1e-4f ? (p - lastPos) / dt : Vector3.zero;
+            lastPos = p;
+            hasLastPos = true;
+            if (!grounded || hit.collider == null || hit.collider.GetComponent<WaterZone>() != null) { dustDebt = 0f; return; }
+            float speed = vel.magnitude;
+            // Разгон — сглаженное ускорение колеса: на старте и при наборе скорости пыли много, в ровной езде — чуть-чуть.
+            float accel = dt > 1e-4f ? (speed - lastSpeed) / dt : 0f;
+            lastSpeed = speed;
+            dustAccel = Mathf.Lerp(dustAccel, Mathf.Max(0f, accel), 1f - Mathf.Exp(-dt * 6f));
+            if (speed < 1f || speed > 80f) { dustDebt = 0f; return; }
+            float size = Mathf.Clamp(radius / 0.4f, 0.6f, 1.6f);
+            float cruise = Mathf.Clamp(speed - 4f, 0f, 20f) * 0.35f;   // ~2 облачка/с на 36 км/ч
+            float launch = Mathf.Min(dustAccel, 12f) * 4f;             // разгон 5 м/с² → ~20 облачков/с
+            dustDebt += (cruise + launch) * size * dt;
+            int n = Mathf.FloorToInt(dustDebt);
+            if (n <= 0) return;
+            dustDebt -= n;
+            Color c = WheelDust.SurfaceColor(hit);
+            // Серое (гравий, щебёнка) — с камешками; зелёное (трава) — без пыли столбом, только немного.
+            float sat = Mathf.Max(c.r, Mathf.Max(c.g, c.b)) - Mathf.Min(c.r, Mathf.Min(c.g, c.b));
+            bool grass = c.g > c.r * 1.1f && c.g > c.b;
+            bool stones = sat < 0.12f || c.r > c.g * 1.15f;
+            if (grass) n = Mathf.Max(1, n / 3);
+            WheelDust.Emit(hit.point, vel, hit.normal, c, n, stones);
         }
 
         /// <summary>

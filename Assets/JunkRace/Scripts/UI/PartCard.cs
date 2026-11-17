@@ -95,6 +95,7 @@ namespace JunkRace
         {
             sb.Clear();
             sb.Append("<size=20><color=#C8C2B8>").Append(part.CategoryName).Append("</color></size>\n");
+            sb.Append("<color=#8FE39A>Ставится как: ").Append(part.FitsAs()).Append("</color>\n");
             if (!string.IsNullOrEmpty(part.Description))
                 sb.Append("<i>").Append(part.Description).Append("</i>\n");
             sb.Append('\n');

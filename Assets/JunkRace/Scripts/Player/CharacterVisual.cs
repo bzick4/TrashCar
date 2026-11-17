@@ -146,6 +146,7 @@ namespace JunkRace
             public Vector3 ArmLRot, ArmRRot, LegLRot, LegRRot;   // текущие углы (градусы)
             public float KneeLRot, KneeRRot;
             public float Drop, Lean;
+            public float HipY;   // высота шарнира тела (бёдер) над ногами
         }
 
         Doll doll;
@@ -160,7 +161,12 @@ namespace JunkRace
             var mat = Material(color);
             var dark = Material(new Color(0.12f, 0.1f, 0.1f));
 
-            var d = new Doll();
+            var d = new Doll { HipY = HipY };
+            var cvm = root.AddComponent<CharacterVisual>();
+            cvm.doll = d;
+            if (BuildMannequin(root.transform, d, mat)) return root;
+            DestroyImmediate(cvm);
+
             d.Body = Joint("Тело", root.transform, new Vector3(0f, HipY, 0f));
             Part(PrimitiveType.Capsule, "Туловище", d.Body, new Vector3(0f, 0.3f, 0f), new Vector3(0.44f, 0.34f, 0.3f), mat);
             Part(PrimitiveType.Sphere, "Голова", d.Body, new Vector3(0f, 0.82f, 0f), Vector3.one * 0.38f, mat);
@@ -190,6 +196,99 @@ namespace JunkRace
             var cv = root.AddComponent<CharacterVisual>();
             cv.doll = d;
             return root;
+        }
+
+        /// <summary>Модель манекена: Resources/JunkRace/Mannequin — части тела отдельными объектами, начало каждой — в её шарнире.</summary>
+        public const string MannequinPath = "JunkRace/Mannequin";
+        static GameObject mannequin;
+        static bool mannequinLoaded;
+        const float DollHeight = 1.73f;
+
+        /// <summary>
+        /// Деревянный манекен вместо примитивов: части (Body, Arm_*, Thigh_*, Shin_*) вешаем на те же шарниры,
+        /// что и у человечка, — анимация общая. Красим цветом игрока (текстура не нужна).
+        /// </summary>
+        static bool BuildMannequin(Transform root, Doll d, Material mat)
+        {
+            if (!mannequinLoaded) { mannequin = Resources.Load<GameObject>(MannequinPath); mannequinLoaded = true; }
+            if (mannequin == null) return false;
+
+            var inst = Instantiate(mannequin, root);
+            inst.transform.localPosition = Vector3.zero;
+            inst.transform.localRotation = Quaternion.identity;
+            inst.transform.localScale = Vector3.one;
+
+            Transform body = null, shin = null;
+            var arms = new System.Collections.Generic.List<Transform>();
+            var thighs = new System.Collections.Generic.List<Transform>();
+            var shins = new System.Collections.Generic.List<Transform>();
+            foreach (Transform t in inst.GetComponentsInChildren<Transform>(true))
+            {
+                if (t.name.StartsWith("Body")) body = t;
+                else if (t.name.StartsWith("Arm_")) arms.Add(t);
+                else if (t.name.StartsWith("Thigh_")) thighs.Add(t);
+                else if (t.name.StartsWith("Shin_")) { shins.Add(t); shin = t; }
+            }
+            if (body == null || arms.Count != 2 || thighs.Count != 2 || shins.Count != 2) { Destroy(inst); return false; }
+
+            // Рост и «на земле»: масштаб по рамке всех частей.
+            Bounds b = RootBounds(inst, root);
+            if (b.size.y < 1e-3f) { Destroy(inst); return false; }
+            inst.transform.localScale = Vector3.one * (DollHeight / b.size.y);
+            // Носки ботинок — вперёд (+Z). Если модель смотрит назад — разворачиваем.
+            var sb = shin.GetComponent<Renderer>().bounds;
+            if (root.InverseTransformPoint(sb.center).z < root.InverseTransformPoint(shin.position).z)
+                inst.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            b = RootBounds(inst, root);
+            inst.transform.localPosition = new Vector3(-b.center.x, -b.min.y, -b.center.z);
+
+            Vector3 At(Transform t) => root.InverseTransformPoint(t.position);
+            // Левая сторона — меньший x (как у человечка: Рука_Л на −X).
+            arms.Sort((p, q) => At(p).x.CompareTo(At(q).x));
+            thighs.Sort((p, q) => At(p).x.CompareTo(At(q).x));
+            shins.Sort((p, q) => At(p).x.CompareTo(At(q).x));
+
+            Vector3 hip = At(body);
+            d.HipY = hip.y;
+            d.Body = Joint("Тело", root, new Vector3(0f, hip.y, 0f));
+            d.ArmL = Joint("Рука_Л", d.Body, At(arms[0]) - new Vector3(0f, hip.y, 0f));
+            d.ArmR = Joint("Рука_П", d.Body, At(arms[1]) - new Vector3(0f, hip.y, 0f));
+            d.LegL = Joint("Нога_Л", root, At(thighs[0]));
+            d.LegR = Joint("Нога_П", root, At(thighs[1]));
+            d.KneeL = Joint("Колено_Л", d.LegL, At(shins[0]) - At(thighs[0]));
+            d.KneeR = Joint("Колено_П", d.LegR, At(shins[1]) - At(thighs[1]));
+
+            body.SetParent(d.Body, true);
+            arms[0].SetParent(d.ArmL, true); arms[1].SetParent(d.ArmR, true);
+            thighs[0].SetParent(d.LegL, true); thighs[1].SetParent(d.LegR, true);
+            shins[0].SetParent(d.KneeL, true); shins[1].SetParent(d.KneeR, true);
+            d.LegL.SetParent(d.Body, true);
+            d.LegR.SetParent(d.Body, true);
+            Destroy(inst);
+
+            foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+            {
+                r.sharedMaterial = mat;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+            }
+            return true;
+        }
+
+        static Bounds RootBounds(GameObject go, Transform root)
+        {
+            bool any = false;
+            Bounds b = default;
+            foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+            {
+                var wb = r.bounds;
+                for (int i = 0; i < 8; i++)
+                {
+                    Vector3 c = wb.center + Vector3.Scale(wb.extents, new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1));
+                    Vector3 l = root.InverseTransformPoint(c);
+                    if (!any) { b = new Bounds(l, Vector3.zero); any = true; } else b.Encapsulate(l);
+                }
+            }
+            return b;
         }
 
         static Transform Joint(string name, Transform parent, Vector3 pos)
@@ -316,7 +415,7 @@ namespace JunkRace
             d.KneeR.localRotation = Quaternion.Euler(d.KneeRRot, 0f, 0f);
             d.ArmL.localRotation = Quaternion.Euler(d.ArmLRot);
             d.ArmR.localRotation = Quaternion.Euler(d.ArmRRot);
-            d.Body.localPosition = new Vector3(0f, HipY + d.Drop, 0f);
+            d.Body.localPosition = new Vector3(0f, d.HipY + d.Drop, 0f);
             d.Body.localRotation = Quaternion.Euler(d.Lean, 0f, 0f);
         }
 

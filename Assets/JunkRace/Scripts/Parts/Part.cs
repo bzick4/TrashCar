@@ -141,6 +141,32 @@ namespace JunkRace
         /// <summary>Родной слот: где деталь работает как задумано.</summary>
         public virtual SlotType NativeSlot => SlotType.Body;
 
+        /// <summary>
+        /// Работает ли деталь в этом слоте по-настоящему (а не «просто груз» или «плохо»).
+        /// По этому подсвечиваются места, когда несёшь деталь.
+        /// </summary>
+        public static bool Fits(Part part, SlotType slot)
+        {
+            switch (slot)
+            {
+                case SlotType.Wheel: return part.NativeSlot == SlotType.Wheel;
+                case SlotType.Steering: return part.NativeSlot == SlotType.Steering || part.AsSteering >= 0.999f;
+                case SlotType.Engine: return part.NativeSlot == SlotType.Engine;
+                case SlotType.Seat: return part.NativeSlot == SlotType.Seat;
+                case SlotType.Side: return part is ArmorPart || part.WorksInBody || (part.NativeSlot == SlotType.Engine && part.GivesPowerIn(slot));
+                default: return part.WorksInBody || (part.NativeSlot == SlotType.Engine && part.GivesPowerIn(slot));
+            }
+        }
+
+        /// <summary>Куда ставить: «Колесо», «Мотор»… — для подсказки на карточке.</summary>
+        public string FitsAs()
+        {
+            if (Category == PartCategory.Hull) return "Корпус — основа машины: к нему крепят всё остальное";
+            if (this is ArmorPart) return "Борт — защита сбоку машины";
+            if (NativeSlot == SlotType.Body) return WorksInBody ? "Кузов — работает в любом месте машины" : "Кузов";
+            return AttachPoint.SlotName(NativeSlot);
+        }
+
         /// <summary>Поворот детали относительно точки крепления (обычно — как точка).</summary>
         public virtual Quaternion MountRotation(AttachPoint point) => Quaternion.identity;
 

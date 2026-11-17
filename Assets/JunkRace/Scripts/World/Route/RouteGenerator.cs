@@ -35,11 +35,29 @@ namespace JunkRace
         [SerializeField] GameObject[] rockModels;
         [SerializeField] GameObject[] mountainModels;
         [SerializeField] GameObject[] logModels;
+        [Header("Текстуры дороги и земли (ставит сборщик сцены; пусто — однотонные цвета)")]
+        [SerializeField] Material roadForest;
+        [SerializeField] Material sideForest;
+        [SerializeField] Material roadMountain;
+        [SerializeField] Material sideMountain;
+        [SerializeField] Material groundGrass;
+        [Header("Мелочь у дороги (Assets/Prefab/Route: bush, Stone, Other)")]
+        [SerializeField] GameObject[] bushModels;
+        [SerializeField] GameObject[] stoneModels;
+        [SerializeField] GameObject[] stumpModels;
+        [SerializeField] GameObject[] postModels;
+        [SerializeField] GameObject[] blockModels;
+        [SerializeField] GameObject[] junkModels;
+        [SerializeField] GameObject[] fenceModels;
 
         public string Summary { get; private set; } = "";
         public bool Generated => map != null;
 
-        const float Step = 2f;           // шаг точек осевой линии, м
+        const float Step = 2f;
+        const float SideTile = 6f;
+        const float RoadTile = 9f;       // повтор текстуры дороги вдоль, м (≈ ширина лесной дороги — без растяжения)
+        const float RoadEdge = 1.1f;     // ширина травяной обочины, м
+        const float EdgeU = 0.12f;       // доля картинки дороги, занятая обочиной       // плитка текстуры откоса, м           // шаг точек осевой линии, м
         const float MaxYaw = 72f;        // дорога не разворачивается назад — не пересечёт сама себя
         const float MaxHeight = 40f;
         const float GroundY = -0.05f;    // земля чуть ниже дороги на равнине (не мерцает)
@@ -119,16 +137,16 @@ namespace JunkRace
             root = new GameObject("Окрестности_свалки").transform;
             root.SetParent(transform, false);
             float zc = g.z - far / 2f;
-            Piece("Земля_Л", cube, new Vector3(g.x - yardHalf - far / 2f, GroundY - 1f, zc), Quaternion.identity, new Vector3(far, 2f, far), Grass, Col.Box, Decor.Far);
-            Piece("Земля_П", cube, new Vector3(g.x + yardHalf + far / 2f, GroundY - 1f, zc), Quaternion.identity, new Vector3(far, 2f, far), Grass, Col.Box, Decor.Far);
+            GroundPiece("Земля_Л", new Vector3(g.x - yardHalf - far / 2f, GroundY - 1f, zc), new Vector3(far, 2f, far));
+            GroundPiece("Земля_П", new Vector3(g.x + yardHalf + far / 2f, GroundY - 1f, zc), new Vector3(far, 2f, far));
             float backLen = far - yardDepth;
-            Piece("Земля_Зад", cube, new Vector3(g.x, GroundY - 1f, g.z - yardDepth - backLen / 2f), Quaternion.identity, new Vector3(yardHalf * 2f, 2f, backLen), Grass, Col.Box, Decor.Far);
+            GroundPiece("Земля_Зад", new Vector3(g.x, GroundY - 1f, g.z - yardDepth - backLen / 2f), new Vector3(yardHalf * 2f, 2f, backLen));
 
             // Временное — до трассы.
             tempRoot = new GameObject("До_старта").transform;
             tempRoot.SetParent(transform, false);
             root = tempRoot;
-            Piece("Земля_впереди", cube, new Vector3(g.x, GroundY - 1f, g.z + 40f - 0.5f), Quaternion.identity, new Vector3(yardHalf * 2f + far * 2f, 2f, 80f), Grass, Col.Box, Decor.Far);
+            GroundPiece("Земля_впереди", new Vector3(g.x, GroundY - 1f, g.z + 40f - 0.5f), new Vector3(yardHalf * 2f + far * 2f, 2f, 80f));
             Piece("Шлагбаум", cube, new Vector3(g.x, 0.6f, g.z + 0.6f), Quaternion.identity, new Vector3(14f, 1.2f, 0.4f), new Color(0.9f, 0.15f, 0.1f), Col.Box);
             Piece("Шлагбаум_полоса", cube, new Vector3(g.x, 0.6f, g.z + 0.38f), Quaternion.identity, new Vector3(14.02f, 0.3f, 0.02f), Color.white, Col.None);
             root = null;
@@ -209,6 +227,8 @@ namespace JunkRace
 
             foreach (var p in map.Paths) p.SmoothForwards();
             foreach (var p in map.Paths) if (p.BuildMesh) BuildRoadMesh(p);
+            foreach (var f in forkFills) BuildForkFill(f.left, f.right);
+            forkFills.Clear();
             Decorate();
             BuildGround();
 
@@ -489,17 +509,23 @@ namespace JunkRace
         void Fork(Branch left, Branch right, float length)
         {
             forks++;
-            float w = width, gap = 4f;
-            float off = Mathf.Max(left.Width, right.Width) / 2f + gap / 2f;
-            float plaza = off * 2f + Mathf.Max(left.Width, right.Width);
+            // Ветки выходят вплотную друг к другу (без проёма): щель между ними растёт постепенно,
+            // а начало клина закрывает заливка (BuildForkFill) — на высокой дороге не провалиться.
+            float w = width, gap = 0f;
+            // Каждая ветка — своим внутренним краем ровно по оси: узкая тропа не оставляет проёма у широкой.
+            float offL = left.Width / 2f + gap / 2f, offR = right.Width / 2f + gap / 2f;
+            float plaza = Mathf.Max(offL + left.Width / 2f, offR + right.Width / 2f) * 2f;
             Run(main, 12f, -yaw * 0.5f, 0f, plaza);   // заодно чуть выпрямляемся
 
             Vector3 start = pos;
             Quaternion rot = Quaternion.Euler(0f, yaw, 0f);
             Vector3 fwd = rot * Vector3.forward, rightDir = rot * Vector3.right;
             float forkProgress = main.StartProgress + main.Length;
-            foreach (var bp in new[] { BuildBranch(left, start - rightDir * off, fwd, rightDir, -1f, length),
-                                       BuildBranch(right, start + rightDir * off, fwd, rightDir, 1f, length) })
+            main.EndForward = fwd;
+            var pair = new[] { BuildBranch(left, start - rightDir * offL, fwd, rightDir, -1f, length),
+                               BuildBranch(right, start + rightDir * offR, fwd, rightDir, 1f, length) };
+            forkFills.Add((pair[0], pair[1]));
+            foreach (var bp in pair)
             {
                 bp.StartProgress = forkProgress;
                 bp.ProgressScale = bp.Length > 1f ? length / bp.Length : 1f;
@@ -509,6 +535,7 @@ namespace JunkRace
             pos = start + fwd * length;
             routeLength += length;
             main = map.NewPath("Дорога");
+            main.StartForward = fwd;
             main.StartProgress = forkProgress + length;
             AddSample(main);
             Run(main, 12f, 0f, 0f, w);
@@ -517,6 +544,7 @@ namespace JunkRace
         RoutePath BuildBranch(Branch b, Vector3 start, Vector3 fwd, Vector3 rightDir, float side, float length)
         {
             var path = map.NewPath(b.Name);
+            path.StartForward = path.EndForward = fwd;
             int n = Mathf.CeilToInt(length / 1f);
             for (int i = 0; i <= n; i++)
             {
@@ -577,6 +605,8 @@ namespace JunkRace
             for (int i = 0; i < subs.Length; i++) subs[i] = new List<int>();
 
             float bottom = GroundY - 0.5f;
+            // Вдоль дороги текстура повторяется через «ширину дороги» метров — картинка не растянута.
+            // Откосы: квадратные плитки SideTile м по длине и по высоте.
             for (int i = 0; i + 1 < s.Count; i++)
             {
                 var a = s[i];
@@ -588,20 +618,40 @@ namespace JunkRace
                 Vector3 aLb = new Vector3(aL.x, ab, aL.z), aRb = new Vector3(aR.x, ab, aR.z);
                 Vector3 bLb = new Vector3(bL.x, bb, bL.z), bRb = new Vector3(bR.x, bb, bR.z);
                 int top = (int)a.Biome * 2, sideSub = top + 1;
-                float v0 = path.Dist[i] / 4f, v1 = path.Dist[i + 1] / 4f;
+                // Вдоль — по общему прогрессу трассы: у развилки рисунок веток продолжает рисунок площадки.
+                float v0 = (path.StartProgress + path.Dist[i]) / RoadTile, v1 = (path.StartProgress + path.Dist[i + 1]) / RoadTile;
+                float d0 = path.Dist[i] / SideTile, d1 = path.Dist[i + 1] / SideTile;
 
                 if (a.Road && b.Road)
                 {
-                    Quad(verts, uvs, subs[top], aL, bL, bR, aR, new Vector2(0f, v0), new Vector2(0f, v1), new Vector2(1f, v1), new Vector2(1f, v0));
-                    Quad(verts, uvs, subs[sideSub], aL, aLb, bLb, bL);
-                    Quad(verts, uvs, subs[sideSub], aR, bR, bRb, aRb);
+                    // Поперёк три полосы: обочины с травой постоянной ширины (RoadEdge м), середина — грунт.
+                    // Иначе на широкой площадке развилки трава по краям раздувалась бы на метры.
+                    float ea = Mathf.Min(RoadEdge, a.HalfWidth * 0.3f), eb = Mathf.Min(RoadEdge, b.HalfWidth * 0.3f);
+                    Vector3 aL2 = aL + a.Right * ea, aR2 = aR - a.Right * ea, bL2 = bL + b.Right * eb, bR2 = bR - b.Right * eb;
+                    Quad(verts, uvs, subs[top], aL, bL, bL2, aL2, new Vector2(0f, v0), new Vector2(0f, v1), new Vector2(EdgeU, v1), new Vector2(EdgeU, v0));
+                    Quad(verts, uvs, subs[top], aL2, bL2, bR2, aR2, new Vector2(EdgeU, v0), new Vector2(EdgeU, v1), new Vector2(1f - EdgeU, v1), new Vector2(1f - EdgeU, v0));
+                    Quad(verts, uvs, subs[top], aR2, bR2, bR, aR, new Vector2(1f - EdgeU, v0), new Vector2(1f - EdgeU, v1), new Vector2(1f, v1), new Vector2(1f, v0));
+                    Quad(verts, uvs, subs[sideSub], aL, aLb, bLb, bL, SideUV(aL, d0), SideUV(aLb, d0), SideUV(bLb, d1), SideUV(bL, d1));
+                    Quad(verts, uvs, subs[sideSub], aR, bR, bRb, aRb, SideUV(aR, d0), SideUV(bR, d1), SideUV(bRb, d1), SideUV(aRb, d0));
                 }
                 // Торцы у пропасти.
-                if (a.Road && !b.Road) Quad(verts, uvs, subs[sideSub], aL, aLb, aRb, aR);
-                if (!a.Road && b.Road) Quad(verts, uvs, subs[sideSub], bL, bR, bRb, bLb);
+                float wA = a.HalfWidth * 2f / SideTile, wB = b.HalfWidth * 2f / SideTile;
+                if (a.Road && !b.Road) Quad(verts, uvs, subs[sideSub], aL, aLb, aRb, aR,
+                                            SideUV(aL, 0f), SideUV(aLb, 0f), SideUV(aRb, wA), SideUV(aR, wA));
+                if (!a.Road && b.Road) Quad(verts, uvs, subs[sideSub], bL, bR, bRb, bLb,
+                                            SideUV(bL, 0f), SideUV(bR, wB), SideUV(bRb, wB), SideUV(bLb, 0f));
             }
 
-            var mesh = new Mesh { name = "Дорога_" + path.Name };
+            // Торцы в начале и в конце пути: на высоте не видно «изнанки» дороги на стыках.
+            EndCap(s[0], true, verts, uvs, subs, bottom);
+            EndCap(s[s.Count - 1], false, verts, uvs, subs, bottom);
+
+            FinishRoadMesh("Дорога_" + path.Name, verts, uvs, subs);
+        }
+
+        void FinishRoadMesh(string name, List<Vector3> verts, List<Vector2> uvs, List<int>[] subs)
+        {
+            var mesh = new Mesh { name = name };
             if (verts.Count > 65000) mesh.indexFormat = IndexFormat.UInt32;
             mesh.SetVertices(verts);
             mesh.SetUVs(0, uvs);
@@ -610,16 +660,84 @@ namespace JunkRace
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
 
-            var go = new GameObject("Дорога_" + path.Name);
+            var go = new GameObject(name);
             go.transform.SetParent(root, false);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             go.AddComponent<MeshRenderer>().sharedMaterials = new[]
             {
-                Mat(ForestRoad), Mat(ForestSide), Mat(MountainRoad), Mat(MountainSide),
+                roadForest ? roadForest : Mat(ForestRoad), sideForest ? sideForest : Mat(ForestSide),
+                roadMountain ? roadMountain : Mat(MountainRoad), sideMountain ? sideMountain : Mat(MountainSide),
             };
             go.AddComponent<MeshCollider>().sharedMesh = mesh;
             go.isStatic = true;
         }
+
+        void EndCap(RouteSample a, bool start, List<Vector3> verts, List<Vector2> uvs, List<int>[] subs, float bottom)
+        {
+            if (!a.Road || a.Pos.y < 0.5f) return;   // на равнине торца не видно
+            Vector3 l = a.Pos - a.Right * a.HalfWidth, r = a.Pos + a.Right * a.HalfWidth;
+            float y = Mathf.Min(bottom, a.Pos.y - 0.6f);
+            Vector3 lb = new Vector3(l.x, y, l.z), rb = new Vector3(r.x, y, r.z);
+            float w = a.HalfWidth * 2f / SideTile;
+            int sub = (int)a.Biome * 2 + 1;
+            if (start) Quad(verts, uvs, subs[sub], l, r, rb, lb, SideUV(l, 0f), SideUV(r, w), SideUV(rb, w), SideUV(lb, 0f));
+            else Quad(verts, uvs, subs[sub], l, lb, rb, r, SideUV(l, 0f), SideUV(lb, 0f), SideUV(rb, w), SideUV(r, w));
+        }
+
+        readonly List<(RoutePath left, RoutePath right)> forkFills = new List<(RoutePath, RoutePath)>();
+
+        /// <summary>
+        /// Клин между ветками у развилки и у места встречи: настил от внутреннего края левой ветки
+        /// до внутреннего края правой, пока щель не шире FillGap. Дальше — обрыв со стенкой.
+        /// </summary>
+        void BuildForkFill(RoutePath left, RoutePath right)
+        {
+            const float FillGap = 3.5f;
+            int n = Mathf.Min(left.Samples.Count, right.Samples.Count);
+            if (n < 2) return;
+            var verts = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            var subs = new List<int>[4];
+            for (int i = 0; i < subs.Length; i++) subs[i] = new List<int>();
+            float bottom = GroundY - 0.5f;
+
+            Vector3 In(RouteSample a, float side) => a.Pos + a.Right * (side * a.HalfWidth);
+            float Gap(int i) { var a = In(left.Samples[i], 1f); var b = In(right.Samples[i], -1f); a.y = b.y = 0f; return Vector3.Distance(a, b); }
+
+            void Strip(int from, int step)
+            {
+                int i = from;
+                while (i + step >= 0 && i + step < n && Gap(i + step) < FillGap)
+                {
+                    var la = left.Samples[i]; var lb = left.Samples[i + step];
+                    var ra = right.Samples[i]; var rb = right.Samples[i + step];
+                    if (!(la.Road && lb.Road && ra.Road && rb.Road)) break;
+                    Vector3 a0 = In(la, 1f), a1 = In(lb, 1f), b0 = In(ra, -1f), b1 = In(rb, -1f);
+                    int top = (int)la.Biome * 2;
+                    float v0 = i * 0.1f, v1 = (i + step) * 0.1f;
+                    if (step > 0) Quad(verts, uvs, subs[top], a0, a1, b1, b0, new Vector2(0.35f, v0), new Vector2(0.35f, v1), new Vector2(0.65f, v1), new Vector2(0.65f, v0));
+                    else Quad(verts, uvs, subs[top], a0, b0, b1, a1, new Vector2(0.35f, v0), new Vector2(0.65f, v0), new Vector2(0.65f, v1), new Vector2(0.35f, v1));
+                    i += step;
+                }
+                if (i == from) return;
+                // Стенка на конце клина (дальше — щель между ветками).
+                var l = left.Samples[i]; var r = right.Samples[i];
+                Vector3 p0 = In(l, 1f), p1 = In(r, -1f);
+                float y0 = Mathf.Min(bottom, p0.y - 0.6f), y1 = Mathf.Min(bottom, p1.y - 0.6f);
+                Vector3 q0 = new Vector3(p0.x, y0, p0.z), q1 = new Vector3(p1.x, y1, p1.z);
+                int side = (int)l.Biome * 2 + 1;
+                float w = Vector3.Distance(p0, p1) / SideTile;
+                // Стенка смотрит в щель: у развилки — вперёд, у места встречи — назад.
+                if (step > 0) Quad(verts, uvs, subs[side], p0, q0, q1, p1, SideUV(p0, 0f), SideUV(q0, 0f), SideUV(q1, w), SideUV(p1, w));
+                else Quad(verts, uvs, subs[side], p0, p1, q1, q0, SideUV(p0, 0f), SideUV(p1, w), SideUV(q1, w), SideUV(q0, 0f));
+            }
+            Strip(0, 1);
+            Strip(n - 1, -1);
+            if (verts.Count == 0) return;
+            FinishRoadMesh("Развилка_" + left.Name + "_" + right.Name, verts, uvs, subs);
+        }
+
+        static Vector2 SideUV(Vector3 p, float along) => new Vector2(along, p.y / SideTile);
 
         /// <summary>Четырёхугольник a-b-c-d (по часовой, если смотреть с лицевой стороны).</summary>
         static void Quad(List<Vector3> verts, List<Vector2> uvs, List<int> tris, Vector3 a, Vector3 b, Vector3 c, Vector3 d,
@@ -658,11 +776,32 @@ namespace JunkRace
             GroundStrip(b, from, zMax);   // по бокам и позади свалки землю уже положил BuildSurroundings
         }
 
+        /// <summary>Плита земли с травой: текстура повторяется каждые GroundTile метров, как бы ни была велика плита.</summary>
+        GameObject GroundPiece(string name, Vector3 position, Vector3 size)
+        {
+            var go = Piece(name, cube, position, Quaternion.identity, size, Grass, Col.Box, Decor.Far);
+            if (groundGrass != null) go.GetComponent<MeshRenderer>().sharedMaterial = Tiled(groundGrass, new Vector2(size.x / GroundTile, size.z / GroundTile));
+            return go;
+        }
+
+        const float GroundTile = 10f;
+        readonly Dictionary<(Material, Vector2), Material> tiled = new Dictionary<(Material, Vector2), Material>();
+
+        Material Tiled(Material src, Vector2 scale)
+        {
+            scale = new Vector2(Mathf.Max(1f, Mathf.Round(scale.x)), Mathf.Max(1f, Mathf.Round(scale.y)));
+            if (tiled.TryGetValue((src, scale), out var m) && m != null) return m;
+            m = new Material(src) { name = src.name + " x" + scale.x + "x" + scale.y };
+            if (m.HasProperty("_BaseMap")) m.SetTextureScale("_BaseMap", scale);
+            else m.mainTextureScale = scale;
+            tiled[(src, scale)] = m;
+            return m;
+        }
+
         void GroundStrip(Bounds b, float z0, float z1)
         {
             if (z1 - z0 < 0.1f) return;
-            Piece("Земля", cube, new Vector3(b.center.x, GroundY - 1f, (z0 + z1) / 2f), Quaternion.identity,
-                  new Vector3(b.size.x, 2f, z1 - z0), Grass, Col.Box, Decor.Far);
+            GroundPiece("Земля", new Vector3(b.center.x, GroundY - 1f, (z0 + z1) / 2f), new Vector3(b.size.x, 2f, z1 - z0));
         }
 
         // ============================ Декорации ============================
@@ -680,6 +819,11 @@ namespace JunkRace
                     for (int k = -1; k <= 1; k += 2)
                     {
                         Vector3 p = s.Pos + s.Right * k * (s.HalfWidth + 0.4f);
+                        if (Any(postModels))
+                        {
+                            Model(postModels, p, Quaternion.LookRotation(s.Forward), Vector3.one * 0.9f, Decor.Small);
+                            continue;
+                        }
                         Piece("Столбик", cube, p + Vector3.up * 0.4f, Quaternion.identity, new Vector3(0.15f, 0.8f, 0.15f), Color.white, Col.None, Decor.Small);
                         Piece("Столбик_верх", cube, p + Vector3.up * 0.85f, Quaternion.identity, new Vector3(0.17f, 0.12f, 0.17f), new Color(0.9f, 0.2f, 0.1f), Col.None, Decor.Small);
                     }
@@ -702,14 +846,78 @@ namespace JunkRace
             // Ближний ряд деревьев (о них сносит кресла снаружи) и лес подальше.
             if (rng.NextDouble() < 0.55)
                 TryTree(s.Pos + s.Right * side * (s.HalfWidth + RandRange(2.5f, 8f)), 2.5f);
-            for (int i = 0; i < 2; i++)
-                if (rng.NextDouble() < 0.7)
+            for (int i = 0; i < 3; i++)
+                if (rng.NextDouble() < 0.75)
                     TryTree(s.Pos + s.Right * side * (s.HalfWidth + RandRange(9f, 45f)) + s.Forward * RandRange(-2.5f, 2.5f), 3f);
             if (rng.NextDouble() < 0.25)
             {
                 Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + RandRange(1.5f, 12f));
                 p.y = GroundY;
                 if (map.IsClear(p, 1.2f) && !InRiver(p)) Bush(p);
+            }
+            // Подлесок: кусты погуще у обочины, пни и камни подальше.
+            if (Any(bushModels) && rng.NextDouble() < 0.45)
+                Scatter(bushModels, s, side, 1.2f, 7f, 0.6f, 1.3f, 1f);
+            if (Any(stumpModels) && rng.NextDouble() < 0.08)
+                Scatter(stumpModels, s, side, 2f, 15f, 0.45f, 0.8f, 1f);
+            if (Any(stoneModels) && rng.NextDouble() < 0.08)
+                Scatter(stoneModels, s, side, 1.5f, 12f, 0.3f, 0.8f, 0.8f);
+            RoadsideExtras(s, side, true);
+        }
+
+        /// <summary>Модель на земле сбоку от дороги: dist — от края дороги, height — высота модели.</summary>
+        GameObject Scatter(GameObject[] set, RouteSample s, int side, float near, float far, float minH, float maxH, float clear)
+        {
+            Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + RandRange(near, far)) + s.Forward * RandRange(-2f, 2f);
+            p.y = GroundY;
+            if (!map.IsClear(p, clear) || InRiver(p, clear)) return null;
+            return Model(set, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * RandRange(minH, maxH), Decor.Small);
+        }
+
+        /// <summary>Заборы вдоль леса, свалочный мусор и бетонные блоки у обочины.</summary>
+        void RoadsideExtras(RouteSample s, int side, bool forest)
+        {
+            // Мусор кучками: бочка, покрышка, мешки — свалка же рядом.
+            if (Any(junkModels) && rng.NextDouble() < 0.05)
+            {
+                Vector3 c = s.Pos + s.Right * side * (s.HalfWidth + RandRange(1.5f, 5f));
+                c.y = GroundY;
+                int n = rng.Next(2, 5);
+                for (int i = 0; i < n; i++)
+                {
+                    Vector3 p = c + new Vector3(RandRange(-1.3f, 1.3f), 0f, RandRange(-1.3f, 1.3f));
+                    if (map.IsClear(p, 0.6f) && !InRiver(p, 0.6f))
+                        Model(junkModels, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * RandRange(0.6f, 0.95f), Decor.Small);
+                }
+            }
+            // Забор — пролёт за пролётом вдоль дороги, на отступе.
+            if (forest && Any(fenceModels) && rng.NextDouble() < 0.04)
+            {
+                float off = s.HalfWidth + RandRange(3f, 5f);
+                int n = rng.Next(3, 8);
+                const float span = 2.2f, h = 1.1f;
+                for (int i = 0; i < n; i++)
+                {
+                    Vector3 p = s.Pos + s.Right * side * off + s.Forward * (i * span);
+                    p.y = GroundY;
+                    if (!map.IsClear(p, 1f) || InRiver(p, 1f)) break;
+                    // Длинная сторона образца — X: кладём её вдоль дороги, растягиваем на пролёт.
+                    var rot = Quaternion.LookRotation(s.Right * side);
+                    Model(fenceModels, p, rot, new Vector3(span, h, h), Decor.Small);
+                }
+            }
+            // Бетонные блоки в горах — рядком у подножия насыпи.
+            if (!forest && Any(blockModels) && rng.NextDouble() < 0.04)
+            {
+                int n = rng.Next(2, 4);
+                float off = s.HalfWidth + RandRange(1f, 3f);
+                for (int i = 0; i < n; i++)
+                {
+                    Vector3 p = s.Pos + s.Right * side * off + s.Forward * (i * 1.4f);
+                    p.y = GroundY;
+                    if (!map.IsClear(p, 0.8f) || InRiver(p, 0.8f)) break;
+                    Model(blockModels, p, Quaternion.LookRotation(s.Forward) * Quaternion.Euler(0f, RandRange(-8f, 8f), 0f), Vector3.one * 0.9f, Decor.Small);
+                }
             }
         }
 
@@ -723,13 +931,52 @@ namespace JunkRace
                 p.y = GroundY + r * 0.4f;
                 if (map.IsClear(p, r) && !InRiver(p, r)) Boulder(p, r, false);
             }
-            if (rng.NextDouble() < 0.25)
+            // Ельник: по одной у дороги и рощицами подальше.
+            if (rng.NextDouble() < 0.4)
             {
                 Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + RandRange(6f, 25f));
                 p.y = GroundY;
                 if (map.IsClear(p, 2f) && !InRiver(p, 2f)) Pine(p);
             }
-            if (rng.NextDouble() < 0.07)
+            if (rng.NextDouble() < 0.12)
+            {
+                Vector3 c = s.Pos + s.Right * side * (s.HalfWidth + RandRange(20f, 70f));
+                int n = rng.Next(3, 8);
+                for (int i = 0; i < n; i++)
+                {
+                    Vector3 p = c + new Vector3(RandRange(-7f, 7f), 0f, RandRange(-7f, 7f));
+                    p.y = GroundY;
+                    if (map.IsClear(p, 2f) && !InRiver(p, 2f)) Pine(p);
+                }
+            }
+            // Скалы средней дистанции — между дорогой и горами на горизонте, чтобы не было голой равнины.
+            if (Any(rockModels) && rng.NextDouble() < 0.1)
+            {
+                float r = RandRange(2.5f, 6f);
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r + RandRange(8f, 40f));
+                p.y = GroundY;
+                if (map.IsClear(p, r) && !InRiver(p, r))
+                    Model(rockModels, new Vector3(p.x, GroundY + r * 0.85f - r * 0.05f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * 2.1f, r * 1.7f, r * 1.9f), Decor.Tree);
+            }
+            if (Any(mountainModels) && rng.NextDouble() < 0.06)
+            {
+                // Холм поближе: та же модель горы, но поменьше.
+                float r = RandRange(8f, 16f);
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r + RandRange(15f, 45f));
+                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f))
+                {
+                    float h = RandRange(0.6f, 1f);
+                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f - r * 0.1f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * 2f, r * 1.6f * h, r * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
+                }
+            }
+            if (Any(stoneModels) && rng.NextDouble() < 0.3)
+                Scatter(stoneModels, s, side, 0.8f, 10f, 0.3f, 1f, 0.8f);
+            if (Any(bushModels) && rng.NextDouble() < 0.12)
+                Scatter(bushModels, s, side, 2f, 12f, 0.5f, 1f, 1f);
+            RoadsideExtras(s, side, false);
+            if (rng.NextDouble() < 0.12)
             {
                 // Горы на горизонте: большие сплюснутые «холмы» со снежными шапками.
                 float r = RandRange(18f, 40f);
@@ -818,6 +1065,11 @@ namespace JunkRace
         void Bush(Vector3 at)
         {
             float r = RandRange(0.8f, 1.5f);
+            if (Any(bushModels))
+            {
+                Model(bushModels, at, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * r, Decor.Small);
+                return;
+            }
             Piece("Куст", sphere, at + Vector3.up * (r * 0.3f), Quaternion.identity, new Vector3(r * 1.4f, r, r * 1.4f), new Color(0.28f, 0.48f, 0.22f), Col.None, Decor.Small);
         }
 

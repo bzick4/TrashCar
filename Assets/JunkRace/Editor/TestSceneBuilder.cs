@@ -222,6 +222,7 @@ namespace JunkRace.EditorTools
             gen.transform.position = Vector3.zero;
             Set(gen, "template", LookBuilder.MakeMaterial(Color.white));
             BuildRouteModels(gen);
+            BuildRouteTextures(gen);
         }
 
         const string RouteModelsFolder = "Assets/Prefab/Route";
@@ -243,13 +244,87 @@ namespace JunkRace.EditorTools
             SetObjects(gen, "mountainModels", RouteTemplates(box, "Mountain", Vector3.zero, Vector3.one, false));
             // Бревно — длинной стороной по X (поперёк дороги).
             SetObjects(gen, "logModels", RouteTemplates(box, "Log", Vector3.zero, new Vector3(1f, 0.999f, 0.999f), false));
+
+            // Мелочь у дороги: высота 1, низ на нуле, свои пропорции — генератор масштабирует по высоте.
+            Vector3 up = new Vector3(0f, 0.5f, 0f), tall = new Vector3(100f, 1f, 100f);
+            SetObjects(gen, "bushModels", RouteTemplates(box, "bush", up, tall, true));
+            SetObjects(gen, "stoneModels", RouteTemplates(box, "Stone", up, tall, true));
+            SetObjects(gen, "stumpModels", RouteTemplates(box, "Other", up, tall, true, "stump", "deadwood"));
+            SetObjects(gen, "postModels", RouteTemplates(box, "Other", up, tall, true, "post"));
+            SetObjects(gen, "blockModels", RouteTemplates(box, "Other", up, tall, true, "beton", "barrier", "signpost"));
+            SetObjects(gen, "junkModels", RouteTemplates(box, "Other", up, tall, true, "barrel", "tire", "bag"));
+            // Забор: вписан в коробку 1×1×0.25, длинной стороной вдоль X — генератор растягивает X на пролёт.
+            SetObjects(gen, "fenceModels", FenceTemplates(box, "fence"));
         }
 
-        static List<GameObject> RouteTemplates(Transform box, string folder, Vector3 center, Vector3 size, bool keepProportions)
+        /// <summary>
+        /// Текстуры дороги, откосов и травы из Assets/Prefab/Route/Textures (forest_road.png и т.д.).
+        /// Нет файла — генератор красит однотонным цветом, как раньше.
+        /// </summary>
+        static void BuildRouteTextures(RouteGenerator gen)
+        {
+            var so = new SerializedObject(gen);
+            void Use(string field, string file)
+            {
+                string path = RouteModelsFolder + "/Textures/" + file + ".png";
+                if (AssetImporter.GetAtPath(path) is TextureImporter ti && (ti.wrapMode != TextureWrapMode.Repeat || ti.anisoLevel < 4))
+                {
+                    ti.wrapMode = TextureWrapMode.Repeat;
+                    ti.maxTextureSize = 1024;
+                    ti.anisoLevel = 4;   // дорога под острым углом — без размытия вдали
+                    ti.SaveAndReimport();
+                }
+                var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+                Material m = null;
+                if (tex != null)
+                {
+                    var src = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = file };
+                    src.SetTexture("_BaseMap", tex);
+                    m = LookBuilder.ConvertMaterial(src);
+                    m.enableInstancing = true;
+                }
+                so.FindProperty(field).objectReferenceValue = m;
+            }
+            Use("roadForest", "forest_road");
+            Use("sideForest", "forest_side");
+            Use("roadMountain", "mountain_road");
+            Use("sideMountain", "mountain_side");
+            Use("groundGrass", "grass");
+            so.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        static List<GameObject> FenceTemplates(Transform box, params string[] files)
+        {
+            var result = new List<GameObject>();
+            foreach (var model in ModelFitter.FindAll(RouteModelsFolder + "/Other"))
+            {
+                if (System.Array.IndexOf(files, model.name) < 0) continue;
+                if (AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(model)) is ModelImporter mi && !mi.isReadable)
+                {
+                    mi.isReadable = true;   // для статического объединения мешей
+                    mi.SaveAndReimport();
+                }
+                var t = new GameObject("Other_" + model.name);
+                t.transform.SetParent(box, false);
+                // Сначала по своим пропорциям — узнать, вдоль какой оси модель длинная.
+                var probe = ModelFitter.Attach(model, t.transform, Vector3.zero, Vector3.one, true);
+                var b = ModelFitter.VertexBounds(t, t.transform);
+                Object.DestroyImmediate(probe);
+                Quaternion? turn = b.size.z > b.size.x ? Quaternion.Euler(0f, 90f, 0f) : (Quaternion?)null;
+                ModelFitter.Attach(model, t.transform, new Vector3(0f, 0.5f, 0f), new Vector3(1f, 1f, 0.25f), false, turn);
+                t.SetActive(false);
+                result.Add(t);
+            }
+            return result;
+        }
+
+        /// <param name="only">Только эти файлы из папки (без расширения); пусто — все.</param>
+        static List<GameObject> RouteTemplates(Transform box, string folder, Vector3 center, Vector3 size, bool keepProportions, params string[] only)
         {
             var result = new List<GameObject>();
             foreach (var model in ModelFitter.FindAll(RouteModelsFolder + "/" + folder))
             {
+                if (only.Length > 0 && System.Array.IndexOf(only, model.name) < 0) continue;
                 // Статическое объединение мешей при запуске требует, чтобы меш был доступен для чтения.
                 string path = AssetDatabase.GetAssetPath(model);
                 if (AssetImporter.GetAtPath(path) is ModelImporter mi && !mi.isReadable)
@@ -390,13 +465,11 @@ namespace JunkRace.EditorTools
 
             // Рули (2, 4, 5, 6) — первый (обычный) лежит у старта.
             Scaled(yard, new[] { 1, 2, 2, 3 }, () => MakeSteering(yard, SteerStyle.Wheel));
-            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeSteering(yard, SteerStyle.Handlebar));
             Scaled(yard, new[] { 0, 1, 1, 1 }, () => MakeSteering(yard, SteerStyle.Laptop));
 
             // Борта (4, 7, 10, 14): защищают машину от разваливания, но тяжёлые.
             Scaled(yard, new[] { 2, 3, 4, 6 }, () => MakeArmor(yard, ArmorStyle.CarDoor));
             Scaled(yard, new[] { 1, 2, 3, 4 }, () => MakeArmor(yard, ArmorStyle.WindowFrame));
-            Scaled(yard, new[] { 1, 2, 3, 4 }, () => MakeArmor(yard, ArmorStyle.Slate));
 
             // Мелочь
             Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeUmbrella(yard));
@@ -1240,7 +1313,7 @@ namespace JunkRace.EditorTools
             DressPart(p, SpecialFolder, "hoover", Vector3.zero, new Vector3(0.5f, 0.5f, 1f));
         }
 
-        enum SteerStyle { Wheel, Handlebar, Laptop }
+        enum SteerStyle { Wheel, Laptop }
         const string SteeringFolder = "Steering", SideFolder = "Side", SeatFolder = "Seat", EngineFolder = "Engine", SpecialFolder = "Special";
 
         static void MakeSteering(Transform parent, SteerStyle style)
@@ -1249,11 +1322,8 @@ namespace JunkRace.EditorTools
             float mass, breakImpulse, quality = 1f, yaw = 1.5f, turn = 90f;
             switch (style)
             {
-                case SteerStyle.Handlebar:
-                    name = "Руль от велика"; desc = "Чувствительный: чуть тронул — уже поворот.";
-                    mass = 3f; breakImpulse = 350f; yaw = 2.6f; turn = 35f; break;
                 case SteerStyle.Laptop:
-                    name = "Ноутбук"; desc = "Закрытый. Держишь, как руль, и надеешься на лучшее.";
+                    name = "Ноутбук"; desc = "Открытый, экран к водителю. Крутишь, как руль, и надеешься на лучшее.";
                     mass = 2f; breakImpulse = 250f; quality = 0.6f; yaw = 1f; turn = 60f; hint = "Батарея села, но крутить можно"; break;
                 default:
                     name = "Руль"; desc = "Без него колёса смотрят строго вперёд.";
@@ -1264,24 +1334,11 @@ namespace JunkRace.EditorTools
             var box = p.gameObject.AddComponent<BoxCollider>();
             box.center = new Vector3(0f, 0.45f, 0f);
             box.size = new Vector3(0.55f, 0.9f, 0.35f);
-            Color column = style == SteerStyle.Handlebar ? new Color(0.2f, 0.45f, 0.8f) : Color.gray;
+            Color column = Color.gray;
             Prim(PrimitiveType.Cylinder, "Стойка", p.transform, new Vector3(0f, 0.38f, 0.05f), new Vector3(0.07f, 0.38f, 0.07f), column, false);
             Prim(PrimitiveType.Cube, "Основание", p.transform, new Vector3(0f, 0.02f, 0.05f), new Vector3(0.3f, 0.04f, 0.25f), Color.gray * 0.7f, false);
 
             Transform visual;
-            if (style == SteerStyle.Handlebar)
-            {
-                // Велосипедный руль не наклонён: поворачивается вокруг стойки.
-                visual = new GameObject("Руль_велика").transform;
-                visual.SetParent(p.transform, false);
-                visual.localPosition = new Vector3(0f, 0.8f, 0.05f);
-                Prim(PrimitiveType.Cube, "Перекладина", visual, Vector3.zero, new Vector3(0.62f, 0.035f, 0.035f), Color.gray, false);
-                for (int s = -1; s <= 1; s += 2)
-                    Prim(PrimitiveType.Cube, "Грипса", visual, new Vector3(s * 0.27f, 0f, 0f), new Vector3(0.12f, 0.045f, 0.045f), Color.black, false);
-                Prim(PrimitiveType.Cylinder, "Звонок", visual, new Vector3(0.15f, 0.035f, 0f), new Vector3(0.05f, 0.015f, 0.05f), Color.yellow, false);
-                DressNode(visual, SteeringFolder, "bike_handlebar", Vector3.zero, new Vector3(0.62f, 0.12f, 0.2f));
-            }
-            else
             {
                 // Баранка (и ноутбук) наклонены к водителю — колени проходят под ней.
                 var tilt = new GameObject("Наклон").transform;
@@ -1294,7 +1351,16 @@ namespace JunkRace.EditorTools
                 {
                     Prim(PrimitiveType.Cube, "Ноутбук", visual, Vector3.zero, new Vector3(0.36f, 0.025f, 0.25f), new Color(0.25f, 0.25f, 0.28f), false);
                     Prim(PrimitiveType.Cube, "Яблочко", visual, new Vector3(0f, 0.014f, 0f), new Vector3(0.05f, 0.004f, 0.05f), new Color(0.85f, 0.85f, 0.9f), false);
-                    DressNode(visual, SteeringFolder, "laptop", Vector3.zero, new Vector3(0.36f, 0.03f, 0.25f), flat: true);
+                    // Модель — открытый ноутбук: ставим ровно (снимаем наклон баранки), экраном к водителю.
+                    var laptop = ModelFitter.Find(SteeringFolder, "laptop");
+                    if (laptop != null)
+                    {
+                        foreach (var r in visual.GetComponentsInChildren<MeshRenderer>(true)) { var mf = r.GetComponent<MeshFilter>(); Object.DestroyImmediate(r); if (mf) Object.DestroyImmediate(mf); }
+                        var level = new GameObject("Ноутбук_ровно").transform;
+                        level.SetParent(visual, false);
+                        level.localRotation = Quaternion.Euler(55f, 0f, 0f) * Quaternion.Euler(0f, 180f, 0f);
+                        ModelFitter.Attach(laptop, level, new Vector3(0f, 0.02f, 0f), new Vector3(0.38f, 0.28f, 0.28f), true);
+                    }
                 }
                 else
                 {
@@ -1312,7 +1378,7 @@ namespace JunkRace.EditorTools
 
         // ---------------- Борта ----------------
 
-        enum ArmorStyle { CarDoor, WindowFrame, Slate }
+        enum ArmorStyle { CarDoor, WindowFrame }
 
         /// <summary>
         /// Боковина. Начало координат — середина, плашмя к борту: длина по X, высота по Y, толщина по Z
@@ -1328,12 +1394,9 @@ namespace JunkRace.EditorTools
                 case ArmorStyle.CarDoor:
                     name = "Дверь от машины"; desc = "Настоящая, с ручкой. Тяжёлая и крепкая: прикрывает лучше всех.";
                     mass = 22f; breakImpulse = 2500f; protection = 0.25f; drag = 0.08f; size = new Vector3(1.1f, 0.7f, 0.08f); model = "car_door"; break;
-                case ArmorStyle.WindowFrame:
+                default:
                     name = "Оконная рама"; desc = "Деревянная, без стекла. Лёгкая, ветер свистит насквозь — почти не тормозит.";
                     mass = 9f; breakImpulse = 1200f; protection = 0.12f; drag = 0.02f; size = new Vector3(1.0f, 0.8f, 0.06f); model = "window_frame"; break;
-                default:
-                    name = "Кусок шифера"; desc = "Волнистый. Прикрывает неплохо, но от сильного удара колется сам.";
-                    mass = 14f; breakImpulse = 900f; protection = 0.2f; drag = 0.06f; size = new Vector3(1.2f, 0.6f, 0.04f); model = "slate"; break;
             }
             var p = MakePart<ArmorPart>(name, PartCategory.Armor, parent, RandomYardPos(), mass, breakImpulse, 0f, desc, drag);
             var t = p.transform;
@@ -1348,7 +1411,7 @@ namespace JunkRace.EditorTools
                     Prim(PrimitiveType.Cube, "Ручка", t, new Vector3(size.x / 2f - 0.15f, 0.05f, size.z / 2f + 0.01f), new Vector3(0.14f, 0.03f, 0.03f), Color.gray, false);
                     break;
                 }
-                case ArmorStyle.WindowFrame:
+                default:
                 {
                     Color wood = new Color(0.92f, 0.92f, 0.88f);
                     float bar = 0.07f;
@@ -1359,17 +1422,6 @@ namespace JunkRace.EditorTools
                     }
                     Prim(PrimitiveType.Cube, "Переплёт", t, Vector3.zero, new Vector3(0.04f, size.y, size.z * 0.8f), wood * 0.95f, false);
                     Prim(PrimitiveType.Cube, "Переплёт", t, Vector3.zero, new Vector3(size.x, 0.04f, size.z * 0.8f), wood * 0.95f, false);
-                    break;
-                }
-                default:
-                {
-                    // Волны шифера — полосы, через одну выдвинутые наружу.
-                    Color grey = new Color(0.62f, 0.64f, 0.62f);
-                    const int waves = 8;
-                    float step = size.x / waves;
-                    for (int i = 0; i < waves; i++)
-                        Prim(PrimitiveType.Cube, "Волна", t, new Vector3(-size.x / 2f + step * (i + 0.5f), 0f, i % 2 == 0 ? 0.01f : -0.01f),
-                             new Vector3(step * 1.02f, size.y, 0.02f), i % 2 == 0 ? grey : grey * 0.9f, false);
                     break;
                 }
             }
@@ -1389,6 +1441,20 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cylinder, "Ручка", p.transform, new Vector3(0f, 0.6f, 0f), new Vector3(0.05f, 0.7f, 0.05f), Color.black, false);
             var canopy = Prim(PrimitiveType.Sphere, "Купол", p.transform, new Vector3(0f, 1.3f, 0f), new Vector3(0.5f, 0.25f, 0.5f), new Color(0.9f, 0.2f, 0.5f), false);
             Set(p, "canopy", canopy.transform);
+            // Модель зонта: целиком в «купол» — раскрытие растягивает её вширь (закрытый — узкий).
+            var model = ModelFitter.Find(SpecialFolder, "umbrella");
+            if (model != null)
+            {
+                foreach (var r in p.GetComponentsInChildren<MeshRenderer>(true)) { var mf = r.GetComponent<MeshFilter>(); Object.DestroyImmediate(r); if (mf) Object.DestroyImmediate(mf); }
+                var dome = new GameObject("Зонт_вид").transform;
+                dome.SetParent(p.transform, false);
+                dome.localScale = new Vector3(0.5f, 1f, 0.5f);   // UmbrellaPart двигает масштаб купола 0.5 ↔ 2
+                var inner = new GameObject("Модель_зонта").transform;
+                inner.SetParent(dome, false);
+                inner.localScale = new Vector3(0.5f, 1f, 0.5f);  // раскрытый (×2) — как в файле
+                ModelFitter.Attach(model, inner, new Vector3(0f, 0.75f, 0f), new Vector3(1.2f, 1.5f, 1.2f), true);
+                Set(p, "canopy", dome);
+            }
         }
 
         static void MakeDuck(Transform parent)

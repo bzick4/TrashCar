@@ -23,7 +23,7 @@ namespace JunkRace
         public static event Action<Racer> Finished;
 
         [Tooltip("Сколько секунд на сборку машины.")]
-        [SerializeField] float buildTime = 180f;
+        [SerializeField] float buildTime = 300f;
         [SerializeField] float countdownTime = 3f;
         [Tooltip("Сколько ждать остальных после первого финиша, с.")]
         [SerializeField] float waitAfterFirst = 90f;
@@ -362,7 +362,7 @@ namespace JunkRace
             return standings;
         }
 
-        static Vehicle VehicleOf(ulong id)
+        public static Vehicle VehicleOf(ulong id)
         {
             var a = World.Get(id);
             if (a != null && a.Driving != null) return a.Driving;

@@ -18,7 +18,7 @@ namespace JunkRace
         public readonly InputAction LookMouse, LookStick, Stats, ToggleView;
 
         // Пешком
-        public readonly InputAction Move, Jump, Grab, Enter, Rotate;
+        public readonly InputAction Move, Jump, Grab, Enter, Rotate, Sprint;
         /// <summary>«Готов» на сборке — работает и пешком, и за рулём.</summary>
         public readonly InputAction Ready;
 
@@ -50,6 +50,9 @@ namespace JunkRace
 
             Enter = OnFoot.AddAction("Enter", InputActionType.Button, "<Keyboard>/f");
             Enter.AddBinding("<Gamepad>/buttonNorth");
+
+            Sprint = OnFoot.AddAction("Sprint", InputActionType.Button, "<Keyboard>/leftShift");
+            Sprint.AddBinding("<Gamepad>/leftStickPress");
 
             Rotate = OnFoot.AddAction("Rotate", InputActionType.Button, "<Keyboard>/r");
             Rotate.AddBinding("<Gamepad>/dpad/down");

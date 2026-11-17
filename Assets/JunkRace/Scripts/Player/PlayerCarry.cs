@@ -376,7 +376,23 @@ namespace JunkRace
                 if (!v.CanAttach(Held, p)) continue;
                 shownPoints.Add(p);
             }
+            // Подсвечиваем только места, где деталь работает. Alt — все (прикрутить как груз).
+            showingAll = UnityEngine.InputSystem.Keyboard.current != null && UnityEngine.InputSystem.Keyboard.current.leftAltKey.isPressed;
+            hiddenNotFitting = 0;
+            if (!showingAll)
+            {
+                int fit = 0;
+                foreach (var p in shownPoints) if (Part.Fits(Held, p.Slot)) fit++;
+                if (fit > 0)
+                {
+                    hiddenNotFitting = shownPoints.Count - fit;
+                    shownPoints.RemoveAll(p => !Part.Fits(Held, p.Slot));
+                }
+            }
         }
+
+        bool showingAll;
+        int hiddenNotFitting;
 
         AttachPoint FindSnapTarget()
         {
@@ -506,6 +522,7 @@ namespace JunkRace
         {
             if (player.InVehicle || InGameMenu.IsOpen || RaceTimer.InteractionLocked) return;
             DrawPointLabels();
+            DrawBuildGuide();
             DrawPileLabels();
             DrawSearch();
 
@@ -527,6 +544,7 @@ namespace JunkRace
                 : snapTarget != null ? $"E — прикрутить «{Held.DisplayName}» → {snapTarget.Label} ({AttachPoint.SlotName(snapTarget.Slot)})"
                 : shownPoints.Count > 0 ? $"E — бросить «{Held.DisplayName}»   ({(player.FirstPersonView ? "наведи прицел на зелёное место" : "поднеси к зелёному месту")}, чтобы прикрутить)"
                 : $"E — бросить «{Held.DisplayName}»";
+            if (Held != null && hiddenNotFitting > 0) hint += "   Alt — все места (прикрутить как груз)";
             GUI.Label(new Rect(20, Screen.height - 40, 1200, 30), hint);
         }
 
@@ -605,6 +623,72 @@ namespace JunkRace
                 labelStyle.normal.textColor = oldLabel;
                 shadowStyle.normal.textColor = oldShadow;
             }
+        }
+
+        GUIStyle guideStyle, guideShadow;
+
+        /// <summary>
+        /// Сборка: куда нести. Нет своей машины — метки над свободными корпусами («возьми корпус»).
+        /// Есть — метка «Твоя машина» над ней, а если она за кадром — стрелка у края экрана.
+        /// </summary>
+        void DrawBuildGuide()
+        {
+            var timer = RaceTimer.Instance;
+            if (timer == null || timer.Phase != MatchPhase.Build) return;
+            if (cam == null) cam = Camera.main;
+            if (cam == null) return;
+            if (guideStyle == null)
+            {
+                guideStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 18, fontStyle = FontStyle.Bold };
+                guideShadow = new GUIStyle(guideStyle);
+                guideShadow.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
+            }
+
+            var own = RaceTimer.VehicleOf(World.LocalId);
+            Vector3 me = transform.position;
+            if (own == null)
+            {
+                // Ближайшие свободные корпуса (не больше пяти, чтобы не рябило).
+                var hulls = new List<Vehicle>();
+                foreach (var v in Vehicle.All)
+                {
+                    if (v == null || v.IsOwned || v.RootPart == null || v.RootPart.IsCarried) continue;
+                    if (Held != null && Held.Vehicle == v) continue;
+                    hulls.Add(v);
+                }
+                hulls.Sort((a, b) => (a.transform.position - me).sqrMagnitude.CompareTo((b.transform.position - me).sqrMagnitude));
+                for (int i = 0; i < hulls.Count && i < 5; i++)
+                    GuideMarker(hulls[i], $"▼ Корпус «{hulls[i].RootPart.DisplayName}»", new Color(1f, 0.85f, 0.3f), false);
+            }
+            else if ((own.transform.position - me).sqrMagnitude > 16f || Held != null)
+                GuideMarker(own, "▼ Твоя машина", new Color(0.45f, 1f, 0.5f), true);
+        }
+
+        void GuideMarker(Vehicle v, string text, Color color, bool edgeArrow)
+        {
+            Vector3 top = v.transform.position + Vector3.up * 1.6f;
+            foreach (var r in v.RootPart.GetComponentsInChildren<Renderer>())
+                top.y = Mathf.Max(top.y, r.bounds.max.y + 0.5f);
+            Vector3 s = cam.WorldToScreenPoint(top);
+            float dist = Vector3.Distance(transform.position, v.transform.position);
+            string label = $"{text}  {dist:0} м";
+            bool onScreen = s.z > 0f && s.x > 0f && s.x < Screen.width && s.y > 0f && s.y < Screen.height;
+            if (!onScreen)
+            {
+                if (!edgeArrow) return;
+                // За кадром: прижимаем к краю экрана в сторону машины.
+                if (s.z < 0f) { s.x = Screen.width - s.x; s.y = Screen.height - s.y; }
+                Vector2 c = new Vector2(Screen.width / 2f, Screen.height / 2f);
+                Vector2 d = new Vector2(s.x, s.y) - c;
+                if (d.sqrMagnitude < 1f) d = Vector2.up;
+                float k = Mathf.Min((Screen.width / 2f - 140f) / Mathf.Max(Mathf.Abs(d.x), 1f), (Screen.height / 2f - 60f) / Mathf.Max(Mathf.Abs(d.y), 1f));
+                s = new Vector3(c.x + d.x * k, c.y + d.y * k, 1f);
+                label = (d.x < 0f ? "◀ " : "") + text.TrimStart('▼', ' ') + $"  {dist:0} м" + (d.x >= 0f ? " ▶" : "");
+            }
+            var rect = new Rect(s.x - 160f, Screen.height - s.y - 14f, 320f, 28f);
+            guideStyle.normal.textColor = color;
+            GUI.Label(new Rect(rect.x + 1.5f, rect.y + 1.5f, rect.width, rect.height), label, guideShadow);
+            GUI.Label(rect, label, guideStyle);
         }
 
         void DrawPointLabels()

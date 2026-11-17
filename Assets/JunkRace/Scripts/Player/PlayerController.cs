@@ -11,6 +11,8 @@ namespace JunkRace
     public class PlayerController : MonoBehaviour, IAvatar
     {
         [SerializeField] float moveSpeed = 6f;
+        [Tooltip("Бег (Shift): во столько раз быстрее шага.")]
+        [SerializeField] float sprintMultiplier = 1.7f;
         [SerializeField] float jumpHeight = 1.2f;
         [SerializeField] float gravity = -20f;
         [SerializeField] float turnSpeed = 720f;
@@ -136,7 +138,8 @@ namespace JunkRace
             // Инерция после вылета из кресла: на земле быстро гасится, в полёте — медленно.
             knockback = Vector3.MoveTowards(knockback, Vector3.zero, (cc.isGrounded ? 12f : 1.5f) * Time.deltaTime);
 
-            cc.Move((dir * moveSpeed + knockback + Vector3.up * verticalVelocity) * Time.deltaTime);
+            float speed = moveSpeed * (allowInput && Controls.Sprint.IsPressed() ? sprintMultiplier : 1f);
+            cc.Move((dir * speed + knockback + Vector3.up * verticalVelocity) * Time.deltaTime);
         }
 
         /// <summary>F: сесть на ближайшее свободное место — за руль или пассажиром в кресло.</summary>

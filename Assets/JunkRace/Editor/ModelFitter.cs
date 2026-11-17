@@ -239,18 +239,16 @@ namespace JunkRace.EditorTools
             inst.transform.localPosition = Vector3.zero;
             foreach (var c in go.GetComponentsInChildren<Collider>(true)) Object.DestroyImmediate(c);
 
+            // Ось колеса — по вершинам: направление, вдоль которого колесо самое тонкое (наименьший разброс точек).
+            // Работает и для колёс, повёрнутых в файле под любым углом (иллюминатор пришёл под ~50°).
+            // Почти совпала с осью рамки — берём ровно её, чтобы не было лишнего перекоса на градус.
+            Vector3 axis = ThinnestAxis(go);
+            Vector3 a = new Vector3(Mathf.Abs(axis.x), Mathf.Abs(axis.y), Mathf.Abs(axis.z));
+            if (a.x > 0.985f) axis = new Vector3(Mathf.Sign(axis.x), 0f, 0f);
+            else if (a.y > 0.985f) axis = new Vector3(0f, Mathf.Sign(axis.y), 0f);
+            else if (a.z > 0.985f) axis = new Vector3(0f, 0f, Mathf.Sign(axis.z));
+            go.transform.localRotation = Quaternion.FromToRotation(axis, Vector3.right);
             Bounds b = VertexBounds(go, pivot);
-            Vector3 s = b.size;
-            float thin = Mathf.Min(s.x, Mathf.Min(s.y, s.z)), thick = Mathf.Max(s.x, Mathf.Max(s.y, s.z));
-            if (thin > thick * 0.8f)
-            {
-                // Рамка почти куб — колесо в файле повёрнуто под углом. Ось колеса ищем по вершинам:
-                // это направление, вдоль которого колесо самое тонкое (наименьший разброс точек).
-                go.transform.localRotation = Quaternion.FromToRotation(ThinnestAxis(go), Vector3.right);
-            }
-            else if (s.y <= s.x && s.y <= s.z) go.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);   // лежит плашмя
-            else if (s.z <= s.x && s.z <= s.y) go.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);   // смотрит вперёд
-            b = VertexBounds(go, pivot);
             float k = Safe(diameter, Mathf.Max(b.size.y, b.size.z));
             go.transform.localScale = Vector3.one * k;
             b = VertexBounds(go, pivot);
