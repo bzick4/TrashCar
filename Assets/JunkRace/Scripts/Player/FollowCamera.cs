@@ -60,6 +60,9 @@ namespace JunkRace
         void LateUpdate()
         {
             if (player == null) return;
+            // Модель человечка ставится позже камеры — раз в полсекунды пересобираем список своих рендеров.
+            rescanTimer -= Time.deltaTime;
+            if (rescanTimer <= 0f) { rescanTimer = 0.5f; ApplyMode(true); }
             if (InGameMenu.IsOpen) { PlaceCamera(); return; }
 
             if (player.Controls.ToggleView.WasPressedThisFrame())
@@ -149,14 +152,32 @@ namespace JunkRace
             hp.localRotation = Quaternion.identity;   // деталь держим ровно: так проще сравнить с «призраком»
         }
 
-        void ApplyMode()
+        float rescanTimer;
+
+        /// <summary>
+        /// От первого лица своё тело не рисуем (только тень) — кроме рук: их видно на руле и с деталью в руках.
+        /// Детали в руках — не тело, их не трогаем.
+        /// </summary>
+        void ApplyMode(bool rescan = false)
         {
-            if (bodyRenderers == null) return;
+            if (player == null) return;
             bool hide = firstPerson;
-            if (hide == bodyHidden) return;
+            if (!rescan && hide == bodyHidden) return;
+            bodyRenderers = player.GetComponentsInChildren<Renderer>(true);
             foreach (var r in bodyRenderers)
-                if (r) r.shadowCastingMode = hide ? ShadowCastingMode.ShadowsOnly : ShadowCastingMode.On;
+            {
+                if (!r || r.GetComponentInParent<Part>() != null) continue;
+                bool arm = IsArm(r.transform);
+                r.shadowCastingMode = hide && !arm ? ShadowCastingMode.ShadowsOnly : ShadowCastingMode.On;
+            }
             bodyHidden = hide;
+        }
+
+        static bool IsArm(Transform t)
+        {
+            for (; t != null; t = t.parent)
+                if (t.name == "Рука_Л" || t.name == "Рука_П") return true;
+            return false;
         }
 
         void OnGUI()

@@ -29,6 +29,12 @@ namespace JunkRace
 
         CoopSession Session => CoopSession.Instance;
 
+        // Анимированные иконки главного экрана (колесо у «Соло», куча у «Кооп»).
+        MenuIconFx fx;
+        Rect soloRect, coopRect;     // прямоугольники кнопок внутри области главного экрана
+        Vector2 mainAreaOrigin;
+        Screen lastDrawnScreen = Screen.Main;
+
         void Start()
         {
             Cursor.lockState = CursorLockMode.None;
@@ -39,10 +45,12 @@ namespace JunkRace
             GameSession.PendingMessage = null;
             if (!string.IsNullOrEmpty(message)) screen = Screen.Browser;   // вернулись после дисконнекта — сразу в список
             if (Session != null) Session.Failed += OnSessionFailed;
+            fx = new MenuIconFx();
         }
 
         void OnDestroy()
         {
+            fx?.Dispose();   // убить твины DOTween, которые крутят иконки
             if (Session != null) Session.Failed -= OnSessionFailed;
         }
 
@@ -54,6 +62,7 @@ namespace JunkRace
 
         void Update()
         {
+            fx?.Update(Time.unscaledDeltaTime);
             if (Session == null) return;
 
             switch (Session.Current)
@@ -90,10 +99,41 @@ namespace JunkRace
             GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
             float w = UnityEngine.Screen.width / scale;
 
-            GUI.DrawTexture(new Rect(0, 0, w, 1080), MenuStyles.BackgroundTex);
-            var panel = new Rect((w - 760f) / 2f, 90f, 760f, 900f);
+            if (MenuStyles.MenuBackground != null)
+                GUI.DrawTexture(new Rect(0, 0, w, 1080), MenuStyles.MenuBackground, ScaleMode.ScaleAndCrop);
+            else
+                GUI.DrawTexture(new Rect(0, 0, w, 1080), MenuStyles.BackgroundTex);
+
+            if (screen == Screen.Main && lastDrawnScreen != Screen.Main) fx?.Reset();
+            lastDrawnScreen = screen;
+
+            if (screen == Screen.Main && MenuStyles.HasArt)
+            {
+                // Главный экран: логотип и кнопки прямо поверх арта, свалка справа остаётся видна.
+                mainAreaOrigin = new Vector2(Mathf.Max(40f, w * 0.06f), 40f);
+                GUILayout.BeginArea(new Rect(mainAreaOrigin.x, mainAreaOrigin.y, 640f, 1000f));
+                DrawMain();
+                GUILayout.EndArea();
+
+                // Иконки рисуем вне области, чтобы разлетающиеся детали не обрезались.
+                if (fx != null && fx.Available)
+                {
+                    var solo = new Rect(soloRect.position + mainAreaOrigin, soloRect.size);
+                    var coop = new Rect(coopRect.position + mainAreaOrigin, coopRect.size);
+                    Vector2 mouse = Event.current.mousePosition;
+                    fx.WheelHovered = !fx.Busy && solo.Contains(mouse);
+                    fx.PileHovered = !fx.Busy && coop.Contains(mouse);
+                    fx.Draw(solo, coop);
+                }
+                return;
+            }
+
+            // Остальные экраны: панель слева (по центру — если нет арта, как было раньше).
+            float panelX = MenuStyles.HasArt ? Mathf.Max(40f, w * 0.06f) : (w - 760f) / 2f;
+            var panel = new Rect(panelX, 70f, 780f, 940f);
             GUI.Box(panel, GUIContent.none, MenuStyles.Panel);
-            GUILayout.BeginArea(new Rect(panel.x + 40, panel.y + 30, panel.width - 80, panel.height - 60));
+            float inset = MenuStyles.HasArt ? 74f : 40f;
+            GUILayout.BeginArea(new Rect(panel.x + inset, panel.y + inset, panel.width - inset * 2f, panel.height - inset * 2f));
 
             switch (screen)
             {
@@ -117,30 +157,61 @@ namespace JunkRace
 
         void DrawMain()
         {
-            GUILayout.Space(40);
-            GUILayout.Label("JUNK RACE", MenuStyles.Title);
-            GUILayout.Label("собери тачку из хлама и доедь", MenuStyles.Subtitle);
-            GUILayout.Space(70);
+            bool art = MenuStyles.HasArt;
+            if (MenuStyles.Logo != null)
+            {
+                var logoRect = GUILayoutUtility.GetRect(640f, 258f, GUILayout.Width(640f), GUILayout.Height(258f));
+                GUI.DrawTexture(logoRect, MenuStyles.Logo, ScaleMode.ScaleToFit);
+                MenuStyles.ShadowLabel("собери тачку из хлама и доедь", MenuStyles.ShadowHint);
+                GUILayout.Space(30);
+            }
+            else
+            {
+                GUILayout.Space(40);
+                GUILayout.Label("JUNK RACE", MenuStyles.Title);
+                GUILayout.Label("собери тачку из хлама и доедь", MenuStyles.Subtitle);
+                GUILayout.Space(70);
+            }
 
-            if (Button("Соло")) GameSession.StartSolo();
-            GUILayout.Space(14);
-            if (Button("Тест-комната")) GameSession.StartDevRoom();
-            GUILayout.Label("все детали рядами, сборка без таймера", MenuStyles.Hint);
-            GUILayout.Space(14);
-            if (Button("Кооп"))
+            float bw = art ? 560f : 680f;
+            bool animated = art && fx != null && fx.Available;
+            // Пока играет анимация нажатия, нажатия игнорируем (кнопки не гасим, чтобы не мигали).
+            bool busy = animated && fx.Busy;
+
+            if (Button("Соло", "solo", GUILayout.Width(bw)) && !busy)
+            {
+                if (animated) fx.LaunchWheel(GameSession.StartSolo);
+                else GameSession.StartSolo();
+            }
+            if (Event.current.type == EventType.Repaint) soloRect = GUILayoutUtility.GetLastRect();
+            GUILayout.Space(8);
+            if (Button("Тест-комната", "wrench", GUILayout.Width(bw)) && !busy) GameSession.StartDevRoom();
+            HintOnArt("все детали рядами, сборка без таймера");
+            GUILayout.Space(8);
+            if (Button("Кооп", "coop", GUILayout.Width(bw)) && !busy)
             {
                 message = Session == null ? "В сцене нет NetworkManager с CoopSession. Пересобери сцены через меню JunkRace." : null;
-                if (Session != null) { screen = Screen.Browser; lastRefresh = -100f; }
+                if (Session != null)
+                {
+                    if (animated) fx.LaunchPile(() => { screen = Screen.Browser; lastRefresh = -100f; });
+                    else { screen = Screen.Browser; lastRefresh = -100f; }
+                }
             }
-            GUILayout.Space(14);
+            if (Event.current.type == EventType.Repaint) coopRect = GUILayoutUtility.GetLastRect();
+            GUILayout.Space(8);
 
+            // Закрытый режим: та же кнопка, но серая и с замком.
             GUI.enabled = false;
-            Button("Ультра кооп  (закрыто)");
+            var prevColor = GUI.color;
+            if (art) GUI.color = new Color(0.55f, 0.55f, 0.55f, 1f);
+            Button("Ультра кооп", "lock", GUILayout.Width(bw));
+            GUI.color = prevColor;
             GUI.enabled = true;
-            GUILayout.Label("скоро: несколько команд на одной свалке", MenuStyles.Hint);
+            HintOnArt("скоро: несколько команд на одной свалке");
 
             GUILayout.FlexibleSpace();
-            if (Button("Выход")) Application.Quit();
+            if (Button("Выход", "back", GUILayout.Width(art ? 300f : bw)) && !busy) Application.Quit();
+            if (art && !string.IsNullOrEmpty(message)) MenuStyles.ShadowLabel(message, MenuStyles.Error);
         }
 
         void DrawBrowser()
@@ -153,10 +224,10 @@ namespace JunkRace
             GUILayout.BeginHorizontal();
             GUILayout.Label(refreshing ? "Серверы (ищем...)" : "Серверы", MenuStyles.Text);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Обновить", MenuStyles.SmallButton, GUILayout.Width(180))) RefreshServers();
+            if (SmallButton("Обновить", "refresh", GUILayout.Width(220))) RefreshServers();
             GUILayout.EndHorizontal();
 
-            scroll = GUILayout.BeginScrollView(scroll, MenuStyles.ListBox, GUILayout.Height(360));
+            scroll = GUILayout.BeginScrollView(scroll, MenuStyles.ListBox, GUILayout.Height(330));
             if (servers.Count == 0)
                 GUILayout.Label(refreshing ? "Ищем серверы..." : "Пока никого. Создай свой сервер!", MenuStyles.Hint);
             else
@@ -164,20 +235,20 @@ namespace JunkRace
             GUILayout.EndScrollView();
 
             GUILayout.Space(16);
-            if (Button("Создать сервер") && CheckName())
+            if (Button("Создать сервер", "key") && CheckName())
             {
                 if (string.IsNullOrEmpty(serverName)) serverName = $"Сервер {playerName.Trim()}";
                 message = null;
                 screen = Screen.Create;
             }
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Войти по коду", MenuStyles.SmallButton) && CheckName())
+            if (SmallButton("Войти по коду", "copy") && CheckName())
             {
                 message = null;
                 joinPassword = "";
                 screen = Screen.Code;
             }
-            if (GUILayout.Button("Назад", MenuStyles.SmallButton)) { message = null; screen = Screen.Main; }
+            if (SmallButton("Назад", "back")) { message = null; screen = Screen.Main; }
             GUILayout.EndHorizontal();
         }
 
@@ -185,14 +256,18 @@ namespace JunkRace
         {
             GUILayout.BeginHorizontal(MenuStyles.Row);
             GUILayout.BeginVertical();
-            GUILayout.Label(s.Name + (s.HasPassword ? "   [пароль]" : ""), MenuStyles.Text);
+            var lockIcon = s.HasPassword ? MenuStyles.Icon("lock") : null;
+            if (s.HasPassword && lockIcon == null)
+                GUILayout.Label(s.Name + "   [пароль]", MenuStyles.RowText);
+            else
+                GUILayout.Label(new GUIContent(" " + s.Name, lockIcon), MenuStyles.RowText, GUILayout.Height(34));
             string status = s.Started ? "идёт игра" : s.IsFull ? "полон" : "ждут игроков";
-            GUILayout.Label($"{s.Players}/{s.MaxPlayers}  ·  {status}", MenuStyles.Hint);
+            GUILayout.Label($"{s.Players}/{s.MaxPlayers}  ·  {status}", MenuStyles.RowHint);
             GUILayout.EndVertical();
             GUILayout.FlexibleSpace();
 
             GUI.enabled = !s.Started && !s.IsFull;
-            if (GUILayout.Button("Войти", MenuStyles.SmallButton, GUILayout.Width(150)) && CheckName())
+            if (GUILayout.Button("Войти", MenuStyles.SmallButton, GUILayout.Width(160)) && CheckName())
             {
                 joinTarget = s;
                 message = null;
@@ -217,7 +292,7 @@ namespace JunkRace
             GUILayout.Label($"Максимум игроков: {GameSession.CoopMaxPlayers}", MenuStyles.Hint);
 
             GUILayout.FlexibleSpace();
-            if (Button("Создать"))
+            if (Button("Создать", "key"))
             {
                 if (createPassword.Length > 0 && createPassword.Length < CoopSession.MinPasswordLength)
                 {
@@ -230,7 +305,7 @@ namespace JunkRace
                     Session.Host(playerName, serverName, createPassword);
                 }
             }
-            if (Button("Назад")) { message = null; screen = Screen.Browser; }
+            if (Button("Назад", "back")) { message = null; screen = Screen.Browser; }
         }
 
         void DrawPassword()
@@ -250,7 +325,7 @@ namespace JunkRace
                     Session.Join(playerName, joinTarget, joinPassword);
                 }
             }
-            if (Button("Назад")) { message = null; screen = Screen.Browser; }
+            if (Button("Назад", "back")) { message = null; screen = Screen.Browser; }
         }
 
         void DrawCode()
@@ -272,7 +347,7 @@ namespace JunkRace
                     Session.JoinByCode(playerName, joinCode, joinPassword);
                 }
             }
-            if (Button("Назад")) { message = null; screen = Screen.Browser; }
+            if (Button("Назад", "back")) { message = null; screen = Screen.Browser; }
         }
 
         void DrawBusy()
@@ -285,22 +360,40 @@ namespace JunkRace
         {
             var s = Session;
             GUILayout.Label(s.ServerName, MenuStyles.Header);
-            GUILayout.Label($"Код для друзей: {s.JoinCode}", MenuStyles.Text);
-            GUILayout.Label($"Игроки {s.Players.Count}/{GameSession.CoopMaxPlayers}", MenuStyles.Text);
-            GUILayout.Space(10);
 
+            // Код для друзей на бирке + кнопка «скопировать».
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Код: {s.JoinCode}", MenuStyles.Tag, GUILayout.Width(300));
+            GUILayout.Space(8);
+            if (SmallButton(copiedAt > Time.unscaledTime - 1.5f ? "Готово!" : "Копировать", "copy", GUILayout.Width(300)))
+            {
+                GUIUtility.systemCopyBuffer = s.JoinCode;
+                copiedAt = Time.unscaledTime;
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Label($"Игроки {s.Players.Count}/{GameSession.CoopMaxPlayers}", MenuStyles.Text);
+            GUILayout.Space(6);
+
+            var hostIcon = MenuStyles.Icon("host");
+            var readyIcon = MenuStyles.Icon("ready");
+            var notReadyIcon = MenuStyles.Icon("not_ready");
             for (int i = 0; i < GameSession.CoopMaxPlayers; i++)
             {
-                GUILayout.BeginHorizontal(MenuStyles.Row);
+                GUILayout.BeginHorizontal(MenuStyles.Slot);
                 if (i < s.Players.Count)
                 {
-                    GUILayout.Label((i == 0 ? "[хост]  " : "") + s.Players[i], MenuStyles.Text);
+                    if (i == 0 && hostIcon != null)
+                        GUILayout.Label(new GUIContent(" " + s.Players[i], hostIcon), MenuStyles.SlotText, GUILayout.Height(44));
+                    else
+                        GUILayout.Label((i == 0 ? "[хост]  " : "") + s.Players[i], MenuStyles.SlotText, GUILayout.Height(44));
                     GUILayout.FlexibleSpace();
                     bool ready = i < s.PlayersReady.Count && s.PlayersReady[i];
-                    GUILayout.Label(ready ? "готов" : "не готов", ready ? MenuStyles.Ready : MenuStyles.Hint);
+                    var icon = ready ? readyIcon : notReadyIcon;
+                    if (icon != null) GUILayout.Label(icon, GUILayout.Width(52), GUILayout.Height(44));
+                    else GUILayout.Label(ready ? "готов" : "не готов", ready ? MenuStyles.Ready : MenuStyles.SlotHint);
                 }
                 else
-                    GUILayout.Label("— свободно —", MenuStyles.Hint);
+                    GUILayout.Label("— свободно —", MenuStyles.SlotHint, GUILayout.Height(44));
                 GUILayout.EndHorizontal();
             }
 
@@ -313,9 +406,9 @@ namespace JunkRace
                 GUILayout.Label("Ждём, пока все нажмут «Готов»", MenuStyles.Subtitle);
 
             GUILayout.FlexibleSpace();
-            if (Button(s.LocalReady ? "Не готов" : "Готов")) s.SetReady(!s.LocalReady);
+            if (Button(s.LocalReady ? "Не готов" : "Готов", s.LocalReady ? "not_ready" : "ready")) s.SetReady(!s.LocalReady);
             GUILayout.Label("Старт — когда все в лобби нажмут «Готов». Можно и одному.", MenuStyles.Hint);
-            if (Button("Выйти")) { s.Leave(); screen = Screen.Browser; lastRefresh = -100f; }
+            if (Button("Выйти", "back")) { s.Leave(); screen = Screen.Browser; lastRefresh = -100f; }
         }
 
         // ================== Хелперы ==================
@@ -329,7 +422,29 @@ namespace JunkRace
 
         void SaveName() => GameSession.PlayerName = playerName.Trim();
 
-        static bool Button(string text) => GUILayout.Button(text, MenuStyles.Button);
+        float copiedAt = -100f;
+
+        static bool Button(string text, params GUILayoutOption[] options) => GUILayout.Button(text, MenuStyles.Button, options);
+
+        /// <summary>Большая кнопка с иконкой слева (если иконки нет — просто текст).</summary>
+        static bool Button(string text, string icon, params GUILayoutOption[] options) =>
+            GUILayout.Button(WithIcon(text, icon), MenuStyles.Button, options);
+
+        static bool SmallButton(string text, string icon, params GUILayoutOption[] options) =>
+            GUILayout.Button(WithIcon(text, icon), MenuStyles.SmallButton, options);
+
+        static GUIContent WithIcon(string text, string icon)
+        {
+            var tex = MenuStyles.HasArt ? MenuStyles.Icon(icon) : null;
+            return tex != null ? new GUIContent("  " + text, tex) : new GUIContent(text);
+        }
+
+        /// <summary>Подсказка на главном экране: поверх арта — с тенью, иначе как раньше.</summary>
+        static void HintOnArt(string text)
+        {
+            if (MenuStyles.HasArt) MenuStyles.ShadowLabel(text, MenuStyles.ShadowHint);
+            else GUILayout.Label(text, MenuStyles.Hint);
+        }
 
         bool showPassword;
 
@@ -346,18 +461,44 @@ namespace JunkRace
             if (!showPassword && Event.current.type == EventType.Repaint && value.Length > 0)
                 MenuStyles.FieldMask.Draw(GUILayoutUtility.GetLastRect(), new GUIContent(new string('*', value.Length)), false, false, false, false);
             GUILayout.Space(10);
-            if (GUILayout.Button(showPassword ? "скрыть" : "показать", MenuStyles.SmallButton, GUILayout.Width(150), GUILayout.Height(54)))
+            if (GUILayout.Button(showPassword ? "скрыть" : "показать", MenuStyles.SmallButton, GUILayout.Width(170)))
                 showPassword = !showPassword;
             GUILayout.EndHorizontal();
             return value;
         }
     }
 
-    /// <summary>Стили IMGUI-меню. Создаются один раз.</summary>
+    /// <summary>
+    /// Стили IMGUI-меню. Создаются один раз.
+    /// Картинки берутся из Resources/UI (кнопки, панели, иконки, логотип, фон) и растягиваются по 9-slice
+    /// через GUIStyle.border. Если какой-то картинки нет — остаётся старый однотонный вид, ничего не ломается.
+    /// Размеры картинок подогнаны под экран 1080p (меню и так масштабируется под высоту 1080).
+    /// </summary>
     static class MenuStyles
     {
-        public static GUIStyle Title, Subtitle, Header, Text, Hint, Error, Ready, Button, SmallButton, Field, HiddenField, FieldMask, Panel, Row, ListBox;
-        public static Texture2D BackgroundTex;
+        public static GUIStyle Title, Subtitle, Header, Text, Hint, Error, Ready, Button, SmallButton, Field, HiddenField, FieldMask,
+                               Panel, Row, RowText, RowHint, Slot, SlotText, SlotHint, Tag, ListBox, ShadowHint;
+        public static Texture2D BackgroundTex;   // однотонная подложка (затемнение в паузе)
+        public static Texture2D MenuBackground;  // арт свалки, может быть null
+        public static Texture2D Logo;            // может быть null
+        public static bool HasArt;
+
+        static readonly Dictionary<string, Texture2D> icons = new Dictionary<string, Texture2D>();
+        static readonly Color Accent = new Color(1f, 0.62f, 0.15f);
+        static readonly Color Ink = new Color(0.17f, 0.10f, 0.06f);       // тёмный текст на оранжевом и бежевом
+        static readonly Color InkSoft = new Color(0.36f, 0.26f, 0.20f);
+        static readonly Color Cream = new Color(0.98f, 0.93f, 0.82f);
+
+        /// <summary>Иконка из Resources/UI/icon_{name}. null, если нет.</summary>
+        public static Texture2D Icon(string name)
+        {
+            if (!icons.TryGetValue(name, out var t))
+            {
+                t = Resources.Load<Texture2D>("UI/icon_" + name);
+                icons[name] = t;
+            }
+            return t;
+        }
 
         public static void Ensure()
         {
@@ -367,26 +508,63 @@ namespace JunkRace
             var panelTex = Tex(new Color(0.20f, 0.18f, 0.16f, 0.97f));
             var rowTex = Tex(new Color(0.27f, 0.24f, 0.21f));
             var listTex = Tex(new Color(0.15f, 0.14f, 0.12f));
-            Color accent = new Color(1f, 0.62f, 0.15f);
+
+            MenuBackground = Resources.Load<Texture2D>("UI/menu_background");
+            Logo = Resources.Load<Texture2D>("UI/logo");
+            var btnN = Load("btn_normal");
+            HasArt = btnN != null;
 
             Title = new GUIStyle(GUI.skin.label) { fontSize = 84, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
-            Title.normal.textColor = accent;
+            Title.normal.textColor = Accent;
             Subtitle = new GUIStyle(GUI.skin.label) { fontSize = 28, alignment = TextAnchor.MiddleCenter, wordWrap = true };
             Subtitle.normal.textColor = new Color(0.9f, 0.85f, 0.75f);
             Header = new GUIStyle(GUI.skin.label) { fontSize = 46, fontStyle = FontStyle.Bold };
-            Header.normal.textColor = accent;
+            Header.normal.textColor = Accent;
             Text = new GUIStyle(GUI.skin.label) { fontSize = 28 };
             Text.normal.textColor = Color.white;
             Hint = new GUIStyle(GUI.skin.label) { fontSize = 21, wordWrap = true };
             Hint.normal.textColor = new Color(0.7f, 0.67f, 0.6f);
+            ShadowHint = new GUIStyle(Hint) { fontStyle = FontStyle.Bold };
+            ShadowHint.normal.textColor = Cream;
             Ready = new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold };
             Ready.normal.textColor = new Color(0.45f, 0.9f, 0.4f);
             Error = new GUIStyle(GUI.skin.label) { fontSize = 24, wordWrap = true };
             Error.normal.textColor = new Color(1f, 0.4f, 0.35f);
 
+            // ---- Кнопки ----
             Button = new GUIStyle(GUI.skin.button) { fontSize = 32, fixedHeight = 74, fontStyle = FontStyle.Bold };
             SmallButton = new GUIStyle(GUI.skin.button) { fontSize = 24, fixedHeight = 56 };
+            if (HasArt)
+            {
+                Skin(Button, btnN, Load("btn_hover"), Load("btn_pressed"), new RectOffset(56, 40, 34, 36));
+                Button.fixedHeight = 92;
+                Button.padding = new RectOffset(34, 30, 20, 22);
+                Button.clipping = TextClipping.Overflow;
+                Button.margin = new RectOffset(0, 0, 6, 6);
+                Button.imagePosition = ImagePosition.ImageLeft;
+                SetText(Button, Ink);
+
+                Skin(SmallButton, Load("btn_small_normal"), Load("btn_small_hover"), Load("btn_small_pressed"), new RectOffset(30, 30, 26, 28));
+                SmallButton.fixedHeight = 70;
+                SmallButton.fontStyle = FontStyle.Bold;
+                SmallButton.padding = new RectOffset(20, 20, 18, 20);
+                SmallButton.clipping = TextClipping.Overflow;
+                SmallButton.margin = new RectOffset(4, 4, 4, 4);
+                SetText(SmallButton, Ink);
+            }
+
+            // ---- Поля ввода ----
             Field = new GUIStyle(GUI.skin.textField) { fontSize = 28, fixedHeight = 54, padding = new RectOffset(12, 12, 10, 10) };
+            var fieldTex = Load("input_field");
+            if (fieldTex != null)
+            {
+                Skin(Field, fieldTex, fieldTex, fieldTex, new RectOffset(26, 26, 22, 22));
+                Field.focused.background = Field.onFocused.background = fieldTex;
+                Field.fixedHeight = 64;
+                Field.padding = new RectOffset(26, 26, 16, 14);
+                SetText(Field, Cream);
+                Field.focused.textColor = Field.onFocused.textColor = Color.white;
+            }
             // Поле пароля: тот же вид, но текст невидим (поверх рисуем звёздочки стилем FieldMask).
             HiddenField = new GUIStyle(Field);
             var clear = new Color(0f, 0f, 0f, 0f);
@@ -395,12 +573,92 @@ namespace JunkRace
             FieldMask = new GUIStyle(GUI.skin.label) { fontSize = 28, padding = Field.padding, alignment = Field.alignment, clipping = TextClipping.Clip };
             FieldMask.normal.textColor = Field.normal.textColor;
 
+            // ---- Панель ----
             Panel = new GUIStyle(GUI.skin.box);
-            Panel.normal.background = panelTex;
+            var panelArt = Load("panel");
+            Panel.normal.background = panelArt != null ? panelArt : panelTex;
+            if (panelArt != null) Panel.border = new RectOffset(140, 140, 140, 140);
+
+            // ---- Строка списка серверов (бежевая табличка, текст тёмный) ----
             Row = new GUIStyle(GUI.skin.box) { padding = new RectOffset(14, 14, 8, 8), margin = new RectOffset(0, 0, 4, 4) };
-            Row.normal.background = rowTex;
+            var rowArt = Load("row_plate");
+            Row.normal.background = rowArt != null ? rowArt : rowTex;
+            RowText = new GUIStyle(Text);
+            RowHint = new GUIStyle(Hint) { wordWrap = false };
+            if (rowArt != null)
+            {
+                Row.border = new RectOffset(30, 125, 22, 22);
+                Row.padding = new RectOffset(34, 34, 12, 12);
+                Row.margin = new RectOffset(0, 0, 6, 6);
+                RowText.fontStyle = FontStyle.Bold;
+                RowText.normal.textColor = Ink;
+                RowHint.normal.textColor = InkSoft;
+            }
+
+            // ---- Слот игрока в лобби (имя пишется в тёмной прорези) ----
+            Slot = new GUIStyle(Row);
+            SlotText = new GUIStyle(Text);
+            SlotHint = new GUIStyle(Hint) { wordWrap = false };
+            var slotArt = Load("player_slot");
+            if (slotArt != null)
+            {
+                Slot.normal.background = slotArt;
+                Slot.border = new RectOffset(80, 65, 22, 22);
+                Slot.padding = new RectOffset(96, 72, 12, 12);
+                Slot.fixedHeight = 72;
+                Slot.margin = new RectOffset(0, 0, 3, 3);
+                SlotText.fontStyle = FontStyle.Bold;
+                SlotText.normal.textColor = Cream;
+                SlotText.alignment = TextAnchor.MiddleLeft;
+                SlotHint.normal.textColor = new Color(0.85f, 0.78f, 0.68f);
+                SlotHint.alignment = TextAnchor.MiddleLeft;
+            }
+
+            // ---- Бирка (код сервера) ----
+            Tag = new GUIStyle(Text) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft };
+            var tagArt = Load("tag");
+            if (tagArt != null)
+            {
+                Tag.normal.background = tagArt;
+                Tag.border = new RectOffset(44, 40, 20, 20);
+                Tag.padding = new RectOffset(54, 34, 10, 10);
+                Tag.fixedHeight = 60;
+                Tag.normal.textColor = Ink;
+            }
+
             ListBox = new GUIStyle(GUI.skin.box) { padding = new RectOffset(8, 8, 8, 8) };
-            ListBox.normal.background = listTex;
+            ListBox.normal.background = HasArt ? Tex(new Color(0f, 0f, 0f, 0.25f)) : listTex;
+        }
+
+        /// <summary>Подпись с тенью — для текста прямо поверх фона-арта.</summary>
+        public static void ShadowLabel(string text, GUIStyle style, params GUILayoutOption[] options)
+        {
+            var content = new GUIContent(text);
+            var rect = GUILayoutUtility.GetRect(content, style, options);
+            if (Event.current.type != EventType.Repaint) return;
+            var shadow = new GUIStyle(style);
+            shadow.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
+            shadow.Draw(new Rect(rect.x + 2, rect.y + 2, rect.width, rect.height), content, false, false, false, false);
+            style.Draw(rect, content, false, false, false, false);
+        }
+
+        static Texture2D Load(string name) => Resources.Load<Texture2D>("UI/" + name);
+
+        static void Skin(GUIStyle s, Texture2D normal, Texture2D hover, Texture2D active, RectOffset border)
+        {
+            if (normal == null) return;
+            s.normal.background = s.onNormal.background = normal;
+            s.hover.background = s.onHover.background = hover != null ? hover : normal;
+            s.active.background = s.onActive.background = active != null ? active : normal;
+            s.focused.background = s.onFocused.background = normal;
+            s.border = border;
+            s.overflow = new RectOffset(0, 0, 0, 0);
+        }
+
+        static void SetText(GUIStyle s, Color c)
+        {
+            s.normal.textColor = s.hover.textColor = s.active.textColor = s.focused.textColor = c;
+            s.onNormal.textColor = s.onHover.textColor = s.onActive.textColor = s.onFocused.textColor = c;
         }
 
         static Texture2D Tex(Color c)

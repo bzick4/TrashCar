@@ -167,8 +167,8 @@ namespace JunkRace.EditorTools
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = FogColor;
-            RenderSettings.fogStartDistance = 35f;
-            RenderSettings.fogEndDistance = 220f;
+            RenderSettings.fogStartDistance = 90f;
+            RenderSettings.fogEndDistance = 650f;
 
             DynamicGI.UpdateEnvironment();
 
@@ -187,7 +187,7 @@ namespace JunkRace.EditorTools
             if (cam != null)
             {
                 cam.clearFlags = CameraClearFlags.Skybox;
-                cam.farClipPlane = 400f;
+                cam.farClipPlane = 1200f;
                 var data = cam.GetUniversalAdditionalCameraData();
                 data.renderPostProcessing = true;
                 data.antialiasing = AntialiasingMode.SubpixelMorphologicalAntiAliasing;

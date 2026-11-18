@@ -107,3 +107,11 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# JunkRace: скриншоты из Unity CLI, вынесенные модели, генерируемые проекты IDE
+/Screenshots/
+/Unused_models/
+/RouteOld_noTextures/
+/ProfilerCaptures/
+*.csproj
+*.slnx

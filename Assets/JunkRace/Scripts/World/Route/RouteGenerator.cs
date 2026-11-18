@@ -120,6 +120,14 @@ namespace JunkRace
             BuildSurroundings();
             YardShuffle.Apply(seed, transform.position, Players);
             YardReady = true;
+
+            // Холмы-задник вокруг свалки (после постройки трассы перестроятся вокруг неё).
+            if (BackdropHills.Instance != null)
+            {
+                var around = new List<Vector3>();
+                for (float z = -40f; z <= 80f; z += 10f) around.Add(transform.position + new Vector3(0f, 0f, z));
+                BackdropHills.Instance.Build(around, seed);
+            }
         }
 
         Transform tempRoot;
@@ -235,6 +243,14 @@ namespace JunkRace
             StaticBatchingUtility.Combine(root.gameObject);
             RouteMap.Current = map;
             ApplyCullDistances();
+
+            // Холмы-задник до горизонта вокруг всей трассы (без коллайдеров, по тому же сиду).
+            if (BackdropHills.Instance != null)
+            {
+                var points = new List<Vector3>();
+                foreach (var p in map.Paths) foreach (var s in p.Samples) points.Add(s.Pos);
+                BackdropHills.Instance.Build(points, seed);
+            }
 
             Summary = $"Маршрут: {string.Join(" → ", names)} · развилок: {forks} · ~{Mathf.RoundToInt(routeLength / 10f) * 10} м · сид {seed}";
         }
@@ -1189,8 +1205,10 @@ namespace JunkRace
             if (cam == null) return;
             var d = cam.layerCullDistances;
             if (d == null || d.Length != 32) d = new float[32];
-            if (smallLayer >= 0) d[smallLayer] = SmallDecorDistance;
-            if (treeLayer >= 0) d[treeLayer] = TreeDistance;
+            // С дымкой (StylizedAtmosphere) видно дальше: деревья тают в воздухе, а не выскакивают.
+            var atmo = StylizedAtmosphere.Instance;
+            if (smallLayer >= 0) d[smallLayer] = atmo != null ? atmo.SmallCullDistance : SmallDecorDistance;
+            if (treeLayer >= 0) d[treeLayer] = atmo != null ? atmo.TreeCullDistance : TreeDistance;
             cam.layerCullDistances = d;
             cam.layerCullSpherical = true;   // по расстоянию, а не по плоскости — не мигает при повороте головы
         }

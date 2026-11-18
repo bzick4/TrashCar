@@ -487,6 +487,17 @@ namespace JunkRace
             return missing.Count == 0 ? null : "Не хватает: " + string.Join(", ", missing);
         }
 
+        // ---- Экран загрузки: случайная картинка из Resources/UI/loading, полоска справа внизу ----
+        static Texture2D[] loadingArts;
+        static Texture2D barFrame, barFill, barPlate;
+        static bool loadingArtLoaded;
+        Texture2D loadingArt;
+        float loadingArtFor = -1f;
+        GUIStyle plateStyle;
+
+        // Окно под заливку внутри рамки (доли картинки loading_frame.png).
+        static readonly Rect BarSlot = new Rect(0.083f, 0.36f, 0.835f, 0.43f);
+
         void DrawLoading(string title)
         {
             // Поверх всего: пока не загрузились все, ничего не видно и не двигается.
@@ -497,19 +508,69 @@ namespace JunkRace
                 loadingTex.SetPixel(0, 0, new Color(0.12f, 0.11f, 0.10f, 1f));
                 loadingTex.Apply();
             }
+            if (!loadingArtLoaded)
+            {
+                loadingArtLoaded = true;
+                loadingArts = Resources.LoadAll<Texture2D>("UI/loading");
+                barFrame = Resources.Load<Texture2D>("UI/loading_frame");
+                barFill = Resources.Load<Texture2D>("UI/loading_fill");
+                barPlate = Resources.Load<Texture2D>("UI/loading_plate");
+            }
+            // Новая загрузка — новая случайная картинка (у каждого своя, это просто фон).
+            if (loadingArtFor != loadingStart)
+            {
+                loadingArtFor = loadingStart;
+                loadingArt = loadingArts != null && loadingArts.Length > 0 ? loadingArts[UnityEngine.Random.Range(0, loadingArts.Length)] : null;
+            }
+
             float w = Screen.width, h = Screen.height;
             GUI.DrawTexture(new Rect(0, 0, w, h), loadingTex);
-            int dots = 1 + (int)(Time.unscaledTime * 2f) % 3;
-            GUI.Label(new Rect(0, h * 0.42f, w, 50), title + new string('.', dots), center);
+            if (loadingArt != null) GUI.DrawTexture(new Rect(0, 0, w, h), loadingArt, ScaleMode.ScaleAndCrop);
+
+            // Прогресс: настоящего процента нет — плавно ползёт к 90%, в сети подтягивается по готовым игрокам.
+            float t = Time.time - loadingStart;
+            float progress = 0.9f * (1f - Mathf.Exp(-t / 3f));
             var nm = Unity.Netcode.NetworkManager.Singleton;
+            string who = null;
             if (nm != null && nm.IsListening)
             {
                 int expected = ExpectedPlayers(out int ready, readyClients);
-                string who = Authority.IsAuthority
+                if (expected > 0) progress = Mathf.Max(progress, 0.95f * ready / expected);
+                who = Authority.IsAuthority
                     ? $"Игроки готовы: {ready}/{expected}"
-                    : "Ждём остальных игроков — таймер у всех стартует одновременно";
-                GUI.Label(new Rect(0, h * 0.42f + 56, w, 34), who, rowCenter);
+                    : "Ждём остальных игроков";
             }
+
+            float k = h / 1080f;
+            if (barFrame != null && barFill != null)
+            {
+                float bw = 620f * k, bh = bw * barFrame.height / barFrame.width;
+                var frame = new Rect(w - bw - 40f * k, h - bh - 40f * k, bw, bh);
+                var slot = new Rect(frame.x + frame.width * BarSlot.x, frame.y + frame.height * BarSlot.y,
+                                    frame.width * BarSlot.width, frame.height * BarSlot.height);
+                GUI.DrawTexture(frame, barFrame);
+                // Полосы не сжимаются: показываем левую часть картинки шириной progress.
+                float p = Mathf.Clamp01(progress);
+                if (p > 0.01f)
+                    GUI.DrawTextureWithTexCoords(new Rect(slot.x, slot.y, slot.width * p, slot.height), barFill, new Rect(0f, 0f, p, 1f));
+
+                // Табличка с надписью над правым краем полосы.
+                int dots = 1 + (int)(Time.unscaledTime * 2f) % 3;
+                plateStyle ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, wordWrap = true, richText = true };
+                plateStyle.fontSize = Mathf.RoundToInt(32f * k);
+                plateStyle.normal.textColor = new Color(0.27f, 0.17f, 0.1f);
+                float pw = 300f * k, ph = barPlate != null ? pw * barPlate.height / barPlate.width : 90f * k;
+                var plate = new Rect(frame.xMax - pw - 30f * k, frame.y - ph + 6f * k, pw, ph);
+                if (barPlate != null) GUI.DrawTexture(plate, barPlate);
+                GUI.Label(new Rect(plate.x + 24f * k, plate.y, plate.width - 48f * k, plate.height),
+                          title + new string('.', dots) + (who != null ? "\n<size=" + Mathf.RoundToInt(20f * k) + ">" + who + "</size>" : ""), plateStyle);
+                return;
+            }
+
+            // Нет картинок полоски — как раньше: надпись по центру.
+            int d2 = 1 + (int)(Time.unscaledTime * 2f) % 3;
+            GUI.Label(new Rect(0, h * 0.42f, w, 50), title + new string('.', d2), center);
+            if (who != null) GUI.Label(new Rect(0, h * 0.42f + 56, w, 34), who, rowCenter);
         }
 
         void DrawPlaces()

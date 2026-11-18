@@ -60,9 +60,10 @@ namespace JunkRace
             GUI.DrawTexture(new Rect(0, 0, w, 1080), MenuStyles.BackgroundTex);
             GUI.color = Color.white;
 
-            var panel = new Rect((w - 560f) / 2f, 200f, 560f, 720f);
+            var panel = new Rect((w - 620f) / 2f, 160f, 620f, 800f);
             GUI.Box(panel, GUIContent.none, MenuStyles.Panel);
-            GUILayout.BeginArea(new Rect(panel.x + 40, panel.y + 30, panel.width - 80, panel.height - 60));
+            float inset = MenuStyles.HasArt ? 74f : 40f;
+            GUILayout.BeginArea(new Rect(panel.x + inset, panel.y + inset, panel.width - inset * 2f, panel.height - inset * 2f));
 
             GUILayout.Label(GameSession.Mode == GameMode.Solo ? "Пауза" : "Меню", MenuStyles.Header);
             if (GameSession.Mode != GameMode.Solo) GUILayout.Label("Игра идёт, остальные играют дальше", MenuStyles.Hint);

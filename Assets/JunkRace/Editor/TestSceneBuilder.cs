@@ -69,6 +69,7 @@ namespace JunkRace.EditorTools
             BuildYardProps();
             PartDefinitions.BindAll();   // характеристики деталей — в ассеты Data/Parts (существующие главнее)
             LookBuilder.ApplyEnvironment(Camera.main);
+            AtmosphereBuilder.Apply(Camera.main);   // дымка, небо, холмы-задник (в духе Over the Hill)
 
             EditorSceneManager.SaveScene(scene, TrackPath);
         }
