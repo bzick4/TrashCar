@@ -15,8 +15,8 @@ namespace JunkRace.EditorTools
     /// </summary>
     public static class TestSceneBuilder
     {
-        const string MenuPath = "Assets/" + GameSession.MenuScene + ".unity";
-        const string TrackPath = "Assets/" + GameSession.TrackScene + ".unity";
+        const string MenuPath = "Assets/Scenes/" + GameSession.MenuScene + ".unity";
+        const string TrackPath = "Assets/Scenes/" + GameSession.TrackScene + ".unity";
 
         [MenuItem("JunkRace/Собрать всё (меню + трасса)")]
         public static void BuildAll()

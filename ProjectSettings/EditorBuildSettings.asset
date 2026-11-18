@@ -6,10 +6,10 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/JunkRaceMainMenu.unity
+    path: Assets/Scenes/JunkRaceMainMenu.unity
     guid: 6f7999e84c9934865b0ad7df4f17658d
   - enabled: 1
-    path: Assets/JunkRaceTestTrack.unity
+    path: Assets/Scenes/JunkRaceTestTrack.unity
     guid: b83186d1224eb43f4af422539979d7e4
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
