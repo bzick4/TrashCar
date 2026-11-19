@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using DG.Tweening;
 
 namespace JunkRace
 {
@@ -120,6 +121,7 @@ namespace JunkRace
 
         void Awake()
         {
+            useGUILayout = false;   // OnGUI рисует без GUILayout — служебный проход раскладки не нужен
             Instance = this;
             loadingStart = Time.time;
         }
@@ -150,7 +152,11 @@ namespace JunkRace
             done?.Invoke();
         }
 
-        void OnDestroy() { if (Instance == this) Instance = null; }
+        void OnDestroy()
+        {
+            if (Instance == this) Instance = null;
+            DOTween.Kill(WarnTween);
+        }
 
         // ============================ Хост ============================
 
@@ -401,13 +407,13 @@ namespace JunkRace
                     DrawBuild(w);
                     break;
                 case MatchPhase.Countdown:
-                    GUI.Label(new Rect(0, h * 0.3f, w, 160), Mathf.CeilToInt(Remaining).ToString(), big);
+                    if (!DrawCountdown(w, h)) GUI.Label(new Rect(0, h * 0.3f, w, 160), Mathf.CeilToInt(Remaining).ToString(), big);
                     break;
                 case MatchPhase.Race:
                 {
                     float t = Elapsed;
                     if (t < 1.2f) GUI.Label(new Rect(0, h * 0.3f, w, 160), "ВПЕРЁД!", big);
-                    GUI.Label(new Rect(20, 20, 300, 40), FormatTime(t), style);
+                    placesTop = DrawRaceClock(t);
                     DrawPlaces();
                     break;
                 }
@@ -433,36 +439,196 @@ namespace JunkRace
             GUI.Label(new Rect(0, 52, w, 30), "Можно осмотреться. Брать детали — когда загрузятся все и пойдёт таймер", rowCenter);
         }
 
+        // ============================ Верх экрана: табличка, лента, предупреждение ============================
+
+        static Texture2D[] digitTex;
+        static Texture2D digitColon, timerSign, hintBanner, warnPlate, racePlate, iconBuilding, iconReady;
+        static bool hudLoaded;
+        GUIStyle bannerStyle, warnStyle, hudLight, hudWarn, signText;
+        float placesTop = 60f;
+
+        // Окна под текст внутри картинок (доли картинки).
+        static readonly Rect SignInner = new Rect(0.07f, 0.45f, 0.86f, 0.44f);
+        static readonly Rect BannerInner = new Rect(0.17f, 0.22f, 0.66f, 0.57f);
+        static readonly Rect RaceInner = new Rect(0.31f, 0.35f, 0.62f, 0.49f);
+
+        bool LoadHud()
+        {
+            if (!hudLoaded)
+            {
+                hudLoaded = true;
+                digitTex = new Texture2D[10];
+                for (int i = 0; i < 10; i++) digitTex[i] = Resources.Load<Texture2D>("UI/hud/digit_" + i);
+                digitColon = Resources.Load<Texture2D>("UI/hud/digit_colon");
+                timerSign = Resources.Load<Texture2D>("UI/hud/timer_sign");
+                hintBanner = Resources.Load<Texture2D>("UI/hud/hint_banner");
+                warnPlate = Resources.Load<Texture2D>("UI/hud/warn_plate");
+                racePlate = Resources.Load<Texture2D>("UI/hud/race_plate");
+                iconBuilding = Resources.Load<Texture2D>("UI/hud/icon_status_building");
+                iconReady = Resources.Load<Texture2D>("UI/hud/icon_status_ready");
+                placesPanel = Resources.Load<Texture2D>("UI/hud/card_panel");
+            }
+            // Картинки — статические (грузятся раз на запуск), а стили — у каждого RaceTimer свои:
+            // при новой сцене RaceTimer новый, и стили надо создать заново, иначе GUI.Box получит null.
+            if (bannerStyle == null && hintBanner != null) bannerStyle = new GUIStyle { border = new RectOffset(300, 300, 0, 0), normal = { background = hintBanner } };
+            if (warnStyle == null && warnPlate != null) warnStyle = new GUIStyle { border = new RectOffset(170, 170, 0, 0), normal = { background = warnPlate } };
+            if (placesStyle == null && placesPanel != null) placesStyle = new GUIStyle { border = new RectOffset(70, 70, 70, 70), normal = { background = placesPanel } };
+            if (hudLight == null)
+            {
+                hudLight = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, richText = true };
+                hudLight.normal.textColor = new Color(0.96f, 0.92f, 0.84f);
+                hudWarn = new GUIStyle(hudLight) { fontStyle = FontStyle.Bold };
+                hudWarn.normal.textColor = new Color(1f, 0.97f, 0.9f);
+                signText = new GUIStyle(hudLight) { fontStyle = FontStyle.Bold };
+                signText.normal.textColor = new Color(1f, 0.75f, 0.3f);
+            }
+            bool ok = timerSign != null && hintBanner != null && warnPlate != null && digitColon != null && warnStyle != null;
+            if (ok) foreach (var d in digitTex) if (d == null) { ok = false; break; }
+            return ok;
+        }
+
+        static Rect Inner(Rect r, Rect frac) => new Rect(r.x + r.width * frac.x, r.y + r.height * frac.y, r.width * frac.width, r.height * frac.height);
+
+        static float DigitsWidth(string text, float height)
+        {
+            float w = 0f;
+            foreach (char c in text)
+            {
+                var t = c == ':' ? digitColon : c >= '0' && c <= '9' ? digitTex[c - '0'] : null;
+                if (t != null) w += height * t.width / t.height * 0.92f;
+            }
+            return w;
+        }
+
+        /// <summary>Цифры из картинок (0–9 и двоеточие) по центру области.</summary>
+        static void DrawDigits(string text, Rect area, float height)
+        {
+            float x = area.center.x - DigitsWidth(text, height) / 2f, y = area.center.y - height / 2f;
+            foreach (char c in text)
+            {
+                var t = c == ':' ? digitColon : c >= '0' && c <= '9' ? digitTex[c - '0'] : null;
+                if (t == null) continue;
+                float cw = height * t.width / t.height;
+                float ch = c == ':' ? height * 0.8f : height;
+                GUI.DrawTexture(new Rect(x, y + (height - ch) / 2f, cw, ch), t);
+                x += cw * 0.92f;   // буквы чуть внахлёст — как приклёпанные
+            }
+        }
+
+        /// <summary>Растягиваемая по ширине картинка (края не тянутся): высота задаётся, ширина — любая.</summary>
+        static void Stretch(Rect r, GUIStyle style, Texture2D tex)
+        {
+            float s = r.height / tex.height;
+            var m = GUI.matrix;
+            GUI.matrix = m * Matrix4x4.TRS(new Vector3(r.x, r.y, 0f), Quaternion.identity, new Vector3(s, s, 1f));
+            GUI.Box(new Rect(0f, 0f, r.width / s, tex.height), GUIContent.none, style);
+            GUI.matrix = m;
+        }
+
         void DrawBuild(float w)
         {
             float t = Remaining;
-            if (GameSession.IsDevRoom)
+            ulong me = World.LocalId;
+            bool dev = GameSession.IsDevRoom;
+            string hint = dev ? "Все детали разложены рядами. Собери машину и нажми G — поехать на трассу"
+                : buildReady.Contains(me) ? "Ты готов. Ждём остальных (G — отменить)"
+                : "Собери машину и нажми G — «Готов». Когда готовы все — старт";
+            string problem = CarProblem(me);
+
+            if (!LoadHud())
             {
-                GUI.Label(new Rect(0, 16, w, 40), "Тест-комната: без таймера", center);
-                GUI.Label(new Rect(0, 52, w, 30), "Все детали разложены рядами. Собери машину и нажми G — поехать на трассу", rowCenter);
-                string devProblem = CarProblem(World.LocalId);
-                if (devProblem != null) GUI.Label(new Rect(0, 84, w, 30), devProblem, warnCenter ??= MakeWarn());
+                GUI.Label(new Rect(0, 16, w, 40), dev ? "Тест-комната: без таймера" : $"Сборка: {(int)(t / 60)}:{(int)(t % 60):00}", center);
+                GUI.Label(new Rect(0, 52, w, 30), hint, rowCenter);
+                if (problem != null) GUI.Label(new Rect(0, 116, w, 30), problem, warnCenter ??= MakeWarn());
                 return;
             }
-            GUI.Label(new Rect(0, 16, w, 40), $"Сборка: {(int)(t / 60)}:{(int)(t % 60):00}", center);
-            ulong me = World.LocalId;
-            bool meReady = buildReady.Contains(me);
-            GUI.Label(new Rect(0, 52, w, 30), meReady
-                ? "Ты готов. Ждём остальных (G — отменить)"
-                : "Собери машину и нажми G — «Готов». Когда готовы все — старт", rowCenter);
 
-            // Кто готов.
-            var sb = new System.Text.StringBuilder();
-            foreach (var a in World.All())
+            float k = Screen.height / 1080f;
+            // Табличка на цепях: время сборки (подсказка и список игроков — в окне Tab).
+            float sw = 240f * k, sh = sw * timerSign.height / timerSign.width;
+            var sign = new Rect((w - sw) / 2f, -14f * k, sw, sh);
+            GUI.DrawTexture(sign, timerSign);
+            var signIn = Inner(sign, SignInner);
+            if (dev)
             {
-                if (sb.Length > 0) sb.Append("     ");
-                sb.Append(a.DisplayName).Append(buildReady.Contains(a.ClientId) ? " — готов" : " — собирает");
+                signText.fontSize = Mathf.RoundToInt(24f * k);
+                GUI.Label(signIn, "ТЕСТ", signText);
             }
-            GUI.Label(new Rect(0, 84, w, 30), sb.ToString(), rowCenter);
+            else DrawDigits($"{(int)(t / 60)}:{(int)(t % 60):00}", signIn, signIn.height * 0.86f);
 
-            // Подсказка, если машина не доедет.
-            string problem = CarProblem(me);
-            if (problem != null) GUI.Label(new Rect(0, 116, w, 30), problem, warnCenter ??= MakeWarn());
+            // Маленькая плашка под таймером — только пока машины ещё нет (меньше двух деталей).
+            // Появление и исчезновение — DOTween (выпрыгивает с перелётом, уходит сжимаясь).
+            var mine = VehicleOf(me);
+            bool need = mine == null || mine.PartCount < 2;
+            if (need) warnMsg = mine == null ? "Нет машины: возьми корпус" : "Прикрути к корпусу первую деталь";
+            if (need != warnTarget)
+            {
+                warnTarget = need;
+                DOTween.Kill(WarnTween);
+                DOTween.To(() => warnShow, v => warnShow = v, need ? 1f : 0f, need ? 0.35f : 0.25f)
+                    .SetEase(need ? Ease.OutBack : Ease.InBack).SetUpdate(true).SetId(WarnTween);
+            }
+            if (warnShow > 0.01f && warnMsg != null)
+            {
+                hudWarn.fontSize = Mathf.RoundToInt(16f * k);
+                float ph = 44f * k, pw = hudWarn.CalcSize(new GUIContent(warnMsg)).x + 2f * 175f * (ph / warnPlate.height) + 20f * k;
+                var plate = new Rect((w - pw) / 2f, sign.yMax - 2f * k, pw, ph);
+                // Масштаб от центра плашки + прозрачность.
+                float sc = Mathf.Max(0.01f, warnShow);
+                var m = GUI.matrix;
+                var col = GUI.color;
+                GUIUtility.ScaleAroundPivot(new Vector2(sc, sc), plate.center);
+                GUI.color = new Color(1f, 1f, 1f, Mathf.Clamp01(warnShow));
+                Stretch(plate, warnStyle, warnPlate);
+                GUI.Label(plate, warnMsg, hudWarn);
+                GUI.color = col;
+                GUI.matrix = m;
+            }
+        }
+
+        const string WarnTween = "warn_plate";
+        float warnShow;
+        bool warnTarget;
+        string warnMsg;
+
+
+        /// <summary>Подсказка на сборке (для окна Tab).</summary>
+        public string BuildHint(ulong id) =>
+            GameSession.IsDevRoom ? "Все детали разложены рядами. Собери машину и нажми G — поехать на трассу"
+            : buildReady.Contains(id) ? "Ты готов. Ждём остальных (G — отменить)"
+            : "Собери машину и нажми G — «Готов». Когда готовы все — старт";
+
+        /// <summary>Чего не хватает машине игрока (для окна Tab), null — всё есть.</summary>
+        public static string ProblemOf(ulong id) => CarProblem(id);
+
+        /// <summary>Отсчёт 3-2-1 нарисованными цифрами: каждая «выпрыгивает» и чуть уменьшается.</summary>
+        bool DrawCountdown(float w, float h)
+        {
+            if (!LoadHud()) return false;
+            int n = Mathf.CeilToInt(Remaining);
+            if (n < 0 || n > 9) return false;
+            float frac = Remaining - Mathf.Floor(Remaining);   // 1 → 0 за секунду
+            float pop = 1f + 0.35f * Mathf.Pow(Mathf.Clamp01(frac - 0.6f) / 0.4f, 2f);
+            float dh = 230f * (h / 1080f) * pop;
+            DrawDigits(n.ToString(), new Rect(0f, h * 0.36f - dh / 2f, w, dh), dh);
+            return true;
+        }
+
+        /// <summary>Время заезда на табличке с секундомером (слева вверху). Возвращает низ таблички — дальше места.</summary>
+        float DrawRaceClock(float t)
+        {
+            if (!LoadHud() || racePlate == null)
+            {
+                GUI.Label(new Rect(20, 20, 300, 40), FormatTime(t), style);
+                return 60f;
+            }
+            float k = Screen.height / 1080f;
+            float pw = 330f * k, ph = pw * racePlate.height / racePlate.width;
+            var plate = new Rect(16f * k, 12f * k, pw, ph);
+            GUI.DrawTexture(plate, racePlate);
+            var inner = Inner(plate, RaceInner);
+            DrawDigits($"{(int)(t / 60)}:{(int)(t % 60):00}", inner, inner.height * 0.9f);
+            return plate.yMax + 4f * k;
         }
 
         GUIStyle warnCenter;
@@ -585,15 +751,74 @@ namespace JunkRace
             if (shownPlaces.Count == 0) return;
             ulong me = World.LocalId;
             int myPlace = shownPlaces.FindIndex(r => r.Id == me);
-            if (myPlace >= 0) GUI.Label(new Rect(20, 60, 400, 40), $"Место {myPlace + 1}/{shownPlaces.Count}", style);
-            float y = 110f;
-            for (int i = 0; i < shownPlaces.Count; i++, y += 26f)
+            float top = placesTop;
+
+            if (!LoadHud() || placesPanel == null)
+            {
+                if (myPlace >= 0) GUI.Label(new Rect(20, top, 400, 40), $"Место {myPlace + 1}/{shownPlaces.Count}", style);
+                float y0 = top + 48f;
+                for (int i = 0; i < shownPlaces.Count; i++, y0 += 26f)
+                {
+                    var r = shownPlaces[i];
+                    string mark = r.Id == me ? "▶ " : "   ";
+                    GUI.Label(new Rect(20, y0, 500, 26), $"{mark}{i + 1}. {r.Name}{(r.Finished ? "  — " + FormatTime(r.Time) : "")}", row);
+                }
+                return;
+            }
+
+            // Ржавая панель (как у карточки детали): сверху «МЕСТО 2 из 4», ниже — строки гонщиков.
+            // Все цифры одного размера с текстом строки; рамка растёт вниз по числу гонщиков.
+            float k = Screen.height / 1080f;
+            float pw = 300f * k;
+            float padX = 44f * k, padTop = 40f * k, padBottom = 50f * k;   // рамка картинки толстая — отступаем от неё
+            float rowH = 34f * k, headH = 40f * k, gap = 8f * k;
+            float ph = padTop + headH + gap + shownPlaces.Count * rowH + padBottom;
+            var panel = new Rect(16f * k, top, pw, ph);
+            float s9 = 0.45f * k;
+            var m = GUI.matrix;
+            GUI.matrix = m * Matrix4x4.TRS(new Vector3(panel.x, panel.y, 0f), Quaternion.identity, new Vector3(s9, s9, 1f));
+            GUI.Box(new Rect(0f, 0f, panel.width / s9, panel.height / s9), GUIContent.none, placesStyle);
+            GUI.matrix = m;
+
+            float x = panel.x + padX, y = panel.y + padTop, cw = pw - padX * 2f;
+            float dh = rowH * 0.72f;   // высота нарисованной цифры — чуть выше строчной буквы
+            hudLight.fontSize = Mathf.RoundToInt(18f * k);
+            leftLabel ??= new GUIStyle(hudLight) { alignment = TextAnchor.MiddleLeft, richText = true };   // один раз: новый стиль в каждом OnGUI копит память
+            leftLabel.fontSize = hudLight.fontSize;
+            if (myPlace >= 0)
+            {
+                // «МЕСТО 2 из 4» в одну строку: слово, цифра, «из», цифра — одного размера.
+                leftLabel.fontStyle = FontStyle.Bold;
+                float wx = x;
+                var wWord = leftLabel.CalcSize(new GUIContent("МЕСТО")).x;
+                GUI.Label(new Rect(wx, y, wWord + 4f, headH), "МЕСТО", leftLabel);
+                wx += wWord + 10f * k;
+                string mine = (myPlace + 1).ToString();
+                float mw = DigitsWidth(mine, dh);
+                DrawDigits(mine, new Rect(wx, y, mw, headH), dh);
+                wx += mw + 10f * k;
+                leftLabel.fontStyle = FontStyle.Normal;
+                var wOf = leftLabel.CalcSize(new GUIContent("из")).x;
+                GUI.Label(new Rect(wx, y, wOf + 4f, headH), "из", leftLabel);
+                wx += wOf + 10f * k;
+                string all = shownPlaces.Count.ToString();
+                DrawDigits(all, new Rect(wx, y, DigitsWidth(all, dh), headH), dh);
+            }
+            y += headH + gap;
+            for (int i = 0; i < shownPlaces.Count; i++, y += rowH)
             {
                 var r = shownPlaces[i];
-                string mark = r.Id == me ? "▶ " : "   ";
-                GUI.Label(new Rect(20, y, 500, 26), $"{mark}{i + 1}. {r.Name}{(r.Finished ? "  — " + FormatTime(r.Time) : "")}", row);
+                bool me2 = r.Id == me;
+                string pos = (i + 1).ToString();
+                DrawDigits(pos, new Rect(x, y, DigitsWidth(pos, dh), rowH), dh);
+                string name = me2 ? "<color=#FFB347><b>" + r.Name + "</b></color>" : r.Name;
+                if (r.Finished) name += "  <color=#C8C2B8>" + FormatTime(r.Time) + "</color>";
+                GUI.Label(new Rect(x + 34f * k, y, cw - 34f * k, rowH), name, leftLabel);
             }
         }
+
+        static Texture2D placesPanel;
+        GUIStyle placesStyle, leftLabel;
 
         void DrawResults()
         {

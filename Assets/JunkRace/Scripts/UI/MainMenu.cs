@@ -9,7 +9,7 @@ namespace JunkRace
     /// </summary>
     public class MainMenu : MonoBehaviour
     {
-        enum Screen { Main, Browser, Create, Password, Code, Busy, Lobby }
+        enum Screen { Main, Browser, Create, Password, Code, Busy, Lobby, Sound }
 
         const float AutoRefreshInterval = 4f;
 
@@ -144,6 +144,7 @@ namespace JunkRace
                 case Screen.Code: DrawCode(); break;
                 case Screen.Busy: DrawBusy(); break;
                 case Screen.Lobby: DrawLobby(); break;
+                case Screen.Sound: DrawSound(); break;
             }
 
             if (!string.IsNullOrEmpty(message))
@@ -213,8 +214,22 @@ namespace JunkRace
             HintOnArt("скоро: несколько команд на одной свалке");
 
             GUILayout.FlexibleSpace();
-            if (Button("Выход", "back", GUILayout.Width(art ? 300f : bw)) && !busy) Application.Quit();
+            GUILayout.BeginHorizontal();
+            if (Button("Выход", "back", GUILayout.Width(art ? 300f : bw / 2f - 6f)) && !busy) Application.Quit();
+            GUILayout.Space(12);
+            if (Button("Звук", GUILayout.Width(art ? 240f : bw / 2f - 6f)) && !busy) screen = Screen.Sound;
+            GUILayout.EndHorizontal();
             if (art && !string.IsNullOrEmpty(message)) MenuStyles.ShadowLabel(message, MenuStyles.Error);
+        }
+
+        /// <summary>Громкость: общая, музыка, двигатель, эффекты (сохраняется).</summary>
+        void DrawSound()
+        {
+            GUILayout.Label("Звук", MenuStyles.Header);
+            GUILayout.Space(24);
+            GameAudio.DrawSliders(MenuStyles.Text, 560f);
+            GUILayout.FlexibleSpace();
+            if (Button("Назад", "back")) { GameAudio.Save(); screen = Screen.Main; }
         }
 
         void DrawBrowser()

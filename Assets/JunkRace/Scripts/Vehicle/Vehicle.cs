@@ -141,6 +141,7 @@ namespace JunkRace
             RootPart = GetComponent<Part>();
             RootPart.Vehicle = this;
             parts.Add(RootPart);
+            if (!TryGetComponent<EngineSound>(out _)) gameObject.AddComponent<EngineSound>();   // звук мотора (молчит, пока мотора нет)
         }
 
         /// <summary>
@@ -474,7 +475,7 @@ namespace JunkRace
                 var h = resetHits[i];
                 if (h.rigidbody == Body) continue;
                 if (h.rigidbody != null && !h.rigidbody.isKinematic) continue;   // свободные детали и чужие машины
-                if (h.collider.GetComponentInParent<PlayerController>() || h.collider.GetComponentInParent<RemoteAvatar>()) continue;
+                if (h.collider is CharacterController) continue;   // игрок (у чужих аватаров коллайдера нет)
                 if (h.distance < bestDist) { bestDist = h.distance; y = h.point.y; found = true; }
             }
             if (found && WaterZone.TryGetDepth(new Vector3(point.x, y + 0.05f, point.z), out float depth))
@@ -505,6 +506,10 @@ namespace JunkRace
                 pendingEject = false;
                 if (HasDriver) World.ServerEjectDriver(this, ejectFling);
             }
+
+            // Стоит без водителя, и физика его уже усыпила (пустой корпус на свалке) — ни сил, ни проверок
+            // не нужно. От удара или прикрученной детали тело проснётся само, и шаг пойдёт как обычно.
+            if (!HasDriver && Body.IsSleeping()) return;
 
             // Упала за край — сама на трассу. Пока стоит колёсами на трассе — запоминаем место.
             var route = RouteMap.Current;
@@ -559,17 +564,11 @@ namespace JunkRace
             else WheelDriveForce = 0f;
 
             // Место решает: поведение детали задаёт слот, в котором она стоит.
-            for (int i = 0; i < parts.Count; i++)
-            {
-                var p = parts[i];
-                switch (p.Slot)
-                {
-                    case SlotType.Wheel: p.TickAsWheel(dt); break;
-                    case SlotType.Steering: p.TickAsSteering(dt); break;
-                    case SlotType.Engine: break;   // мощность уже учтена в TotalPower
-                    default: p.Tick(dt); break;    // кузов и корень: работают только самостоятельные детали
-                }
-            }
+            // Списки по ролям собраны заранее (RecalculateMass — при каждой прикрутке/откручивании):
+            // не перебираем весь хлам и не зовём пустые методы у деталей, которым нечего делать.
+            for (int i = 0; i < wheelParts.Count; i++) wheelParts[i].TickAsWheel(dt);
+            for (int i = 0; i < steeringParts.Count; i++) steeringParts[i].TickAsSteering(dt);
+            for (int i = 0; i < bodyTickers.Count; i++) bodyTickers[i].Tick(dt);
 
             // Сопротивление воздуха: растёт с квадратом скорости — отсюда естественная максималка.
             Vector3 v = Body.linearVelocity;
@@ -593,13 +592,29 @@ namespace JunkRace
             lastPosition = transform.position;
         }
 
+        // Детали по ролям: колёса, рули и самостоятельные (вентилятор, зонт). Мотору тика не нужно —
+        // его мощность уже в TotalPower.
+        readonly List<Part> wheelParts = new List<Part>();
+        readonly List<Part> steeringParts = new List<Part>();
+        readonly List<IBodyTicker> bodyTickers = new List<IBodyTicker>();
+
         void RecalculateMass()
         {
             float total = 0f, power = 0f, drag = 0f, steer = 0f, protection = 0f;
             armorLeft = armorRight = false;
             Vector3 com = Vector3.zero;
+            wheelParts.Clear();
+            steeringParts.Clear();
+            bodyTickers.Clear();
             foreach (var p in parts)
             {
+                switch (p.Slot)
+                {
+                    case SlotType.Wheel: wheelParts.Add(p); break;
+                    case SlotType.Steering: steeringParts.Add(p); break;
+                    case SlotType.Engine: break;
+                    default: if (p is IBodyTicker t) bodyTickers.Add(t); break;
+                }
                 // Масса и воздух — у всех, в любом слоте.
                 total += p.Mass;
                 com += transform.InverseTransformPoint(p.transform.position) * p.Mass;

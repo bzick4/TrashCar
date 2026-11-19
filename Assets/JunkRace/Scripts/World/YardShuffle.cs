@@ -11,7 +11,8 @@ namespace JunkRace
     /// </summary>
     public static class YardShuffle
     {
-        const float YardHalf = 21f, YardDepth = 40f;
+        /// <summary>Размер свалки: полуширина и глубина (м). Единый источник — по нему строят сцену и трассу.</summary>
+        public const float YardHalf = 29.5f, YardDepth = 56f;   // было 21 × 40, увеличено на 40%
         const float PileRadius = 4.5f;        // модель кучи ~7.6 м + запас
         const float PileGap = 9.5f;           // между центрами куч
         const float CorridorHalf = 6.5f;      // решётка ±3.5 м + полкорпуса + запас

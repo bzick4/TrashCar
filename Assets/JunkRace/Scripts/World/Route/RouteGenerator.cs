@@ -84,6 +84,7 @@ namespace JunkRace
 
         void Awake()
         {
+            useGUILayout = false;   // OnGUI рисует без GUILayout — служебный проход раскладки не нужен
             Instance = this;
             Seed = 0;
         }
@@ -125,7 +126,7 @@ namespace JunkRace
             if (BackdropHills.Instance != null)
             {
                 var around = new List<Vector3>();
-                for (float z = -40f; z <= 80f; z += 10f) around.Add(transform.position + new Vector3(0f, 0f, z));
+                for (float z = -YardShuffle.YardDepth; z <= 80f; z += 10f) around.Add(transform.position + new Vector3(0f, 0f, z));
                 BackdropHills.Instance.Build(around, seed);
             }
         }
@@ -140,7 +141,7 @@ namespace JunkRace
         {
             PreparePrimitives();
             Vector3 g = transform.position;
-            const float far = 300f, yardHalf = 21f, yardDepth = 40f;
+            const float far = 300f, yardHalf = YardShuffle.YardHalf, yardDepth = YardShuffle.YardDepth;
 
             root = new GameObject("Окрестности_свалки").transform;
             root.SetParent(transform, false);
@@ -198,8 +199,8 @@ namespace JunkRace
             // Свалка — тоже часть маршрута (для сброса), но дорогу на ней не строим.
             var yard = map.NewPath("Свалка");
             yard.BuildMesh = false;
-            for (float z = -40f; z <= 0.01f; z += 4f)
-                yard.Add(new RouteSample { Pos = transform.position + new Vector3(0f, 0f, z), Forward = Vector3.forward, HalfWidth = 21f, Road = true });
+            for (float z = -YardShuffle.YardDepth; z <= 0.01f; z += 4f)
+                yard.Add(new RouteSample { Pos = transform.position + new Vector3(0f, 0f, z), Forward = Vector3.forward, HalfWidth = YardShuffle.YardHalf, Road = true });
 
             pos = transform.position;
             yaw = 0f;
@@ -827,6 +828,21 @@ namespace JunkRace
             foreach (var path in map.Paths)
             {
                 if (!path.BuildMesh) continue;
+                // Мусор прямо на дороге: бочки, покрышки, мешки кучкой — объезжай или тарань.
+                if (Any(junkModels))
+                    for (float d = 40f; d < path.Length - 10f; d += RandRange(25f, 55f))
+                    {
+                        var s = path.At(d);
+                        if (!s.Road || s.Pos.y < WaterY + 0.2f || rng.NextDouble() > 0.5) continue;
+                        int n = rng.Next(1, 4);
+                        float lat = RandRange(-(s.HalfWidth - 1.5f), s.HalfWidth - 1.5f);
+                        for (int i = 0; i < n; i++)
+                        {
+                            Vector3 p = s.Pos + s.Right * (lat + RandRange(-1f, 1f)) + s.Forward * RandRange(-1.5f, 1.5f);
+                            p.y = s.Pos.y;
+                            Model(junkModels, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * RandRange(0.6f, 0.9f), Decor.Solid, true);
+                        }
+                    }
                 // Столбики по краям — чтобы в открытом мире было видно, где дорога.
                 for (float d = 4f; d < path.Length; d += 12f)
                 {
@@ -837,7 +853,7 @@ namespace JunkRace
                         Vector3 p = s.Pos + s.Right * k * (s.HalfWidth + 0.4f);
                         if (Any(postModels))
                         {
-                            Model(postModels, p, Quaternion.LookRotation(s.Forward), Vector3.one * 0.9f, Decor.Small);
+                            Model(postModels, p, Quaternion.LookRotation(s.Forward), Vector3.one * 0.9f, Decor.Small, true);
                             continue;
                         }
                         Piece("Столбик", cube, p + Vector3.up * 0.4f, Quaternion.identity, new Vector3(0.15f, 0.8f, 0.15f), Color.white, Col.None, Decor.Small);
@@ -875,19 +891,19 @@ namespace JunkRace
             if (Any(bushModels) && rng.NextDouble() < 0.45)
                 Scatter(bushModels, s, side, 1.2f, 7f, 0.6f, 1.3f, 1f);
             if (Any(stumpModels) && rng.NextDouble() < 0.08)
-                Scatter(stumpModels, s, side, 2f, 15f, 0.45f, 0.8f, 1f);
+                Scatter(stumpModels, s, side, 2f, 15f, 0.45f, 0.8f, 1f, true);
             if (Any(stoneModels) && rng.NextDouble() < 0.08)
-                Scatter(stoneModels, s, side, 1.5f, 12f, 0.3f, 0.8f, 0.8f);
+                Scatter(stoneModels, s, side, 1.5f, 12f, 0.3f, 0.8f, 0.8f, true);
             RoadsideExtras(s, side, true);
         }
 
         /// <summary>Модель на земле сбоку от дороги: dist — от края дороги, height — высота модели.</summary>
-        GameObject Scatter(GameObject[] set, RouteSample s, int side, float near, float far, float minH, float maxH, float clear)
+        GameObject Scatter(GameObject[] set, RouteSample s, int side, float near, float far, float minH, float maxH, float clear, bool solid = false)
         {
             Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + RandRange(near, far)) + s.Forward * RandRange(-2f, 2f);
             p.y = GroundY;
             if (!map.IsClear(p, clear) || InRiver(p, clear)) return null;
-            return Model(set, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * RandRange(minH, maxH), Decor.Small);
+            return Model(set, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * RandRange(minH, maxH), Decor.Small, solid);
         }
 
         /// <summary>Заборы вдоль леса, свалочный мусор и бетонные блоки у обочины.</summary>
@@ -903,7 +919,7 @@ namespace JunkRace
                 {
                     Vector3 p = c + new Vector3(RandRange(-1.3f, 1.3f), 0f, RandRange(-1.3f, 1.3f));
                     if (map.IsClear(p, 0.6f) && !InRiver(p, 0.6f))
-                        Model(junkModels, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * RandRange(0.6f, 0.95f), Decor.Small);
+                        Model(junkModels, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * RandRange(0.6f, 0.95f), Decor.Small, true);
                 }
             }
             // Забор — пролёт за пролётом вдоль дороги, на отступе.
@@ -919,7 +935,7 @@ namespace JunkRace
                     if (!map.IsClear(p, 1f) || InRiver(p, 1f)) break;
                     // Длинная сторона образца — X: кладём её вдоль дороги, растягиваем на пролёт.
                     var rot = Quaternion.LookRotation(s.Right * side);
-                    Model(fenceModels, p, rot, new Vector3(span, h, h), Decor.Small);
+                    Model(fenceModels, p, rot, new Vector3(span, h, h), Decor.Small, true);
                 }
             }
             // Бетонные блоки в горах — рядком у подножия насыпи.
@@ -932,7 +948,7 @@ namespace JunkRace
                     Vector3 p = s.Pos + s.Right * side * off + s.Forward * (i * 1.4f);
                     p.y = GroundY;
                     if (!map.IsClear(p, 0.8f) || InRiver(p, 0.8f)) break;
-                    Model(blockModels, p, Quaternion.LookRotation(s.Forward) * Quaternion.Euler(0f, RandRange(-8f, 8f), 0f), Vector3.one * 0.9f, Decor.Small);
+                    Model(blockModels, p, Quaternion.LookRotation(s.Forward) * Quaternion.Euler(0f, RandRange(-8f, 8f), 0f), Vector3.one * 0.9f, Decor.Small, true);
                 }
             }
         }
@@ -988,7 +1004,7 @@ namespace JunkRace
                 }
             }
             if (Any(stoneModels) && rng.NextDouble() < 0.3)
-                Scatter(stoneModels, s, side, 0.8f, 10f, 0.3f, 1f, 0.8f);
+                Scatter(stoneModels, s, side, 0.8f, 10f, 0.3f, 1f, 0.8f, true);
             if (Any(bushModels) && rng.NextDouble() < 0.12)
                 Scatter(bushModels, s, side, 2f, 12f, 0.5f, 1f, 1f);
             RoadsideExtras(s, side, false);
@@ -1158,7 +1174,7 @@ namespace JunkRace
         }
 
         /// <summary>Копия случайного образца модели: позиция, поворот и масштаб — как у примитива.</summary>
-        GameObject Model(GameObject[] set, Vector3 position, Quaternion rotation, Vector3 scale, Decor decor)
+        GameObject Model(GameObject[] set, Vector3 position, Quaternion rotation, Vector3 scale, Decor decor, bool solid = false)
         {
             var src = set[rng.Next(set.Length)];
             var go = Instantiate(src, position, rotation, root);
@@ -1172,7 +1188,33 @@ namespace JunkRace
             if (decor == Decor.Small || decor == Decor.Far)
                 foreach (var r in go.GetComponentsInChildren<Renderer>(true)) r.shadowCastingMode = ShadowCastingMode.Off;
             go.SetActive(true);
+            if (solid) FitBox(go);
             return go;
+        }
+
+        /// <summary>
+        /// Твёрдая коробка по габаритам модели: у образцов коллайдеры срезаны при подгонке, а мусор, бетон,
+        /// камни и пни должны мешать — в них врезаются, а не проезжают насквозь.
+        /// </summary>
+        static void FitBox(GameObject go)
+        {
+            bool any = false;
+            Bounds b = default;
+            foreach (var mf in go.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.sharedMesh == null) continue;
+                var mb = mf.sharedMesh.bounds;
+                for (int i = 0; i < 8; i++)
+                {
+                    Vector3 c = mb.center + Vector3.Scale(mb.extents, new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1));
+                    Vector3 l = go.transform.InverseTransformPoint(mf.transform.TransformPoint(c));
+                    if (!any) { b = new Bounds(l, Vector3.zero); any = true; } else b.Encapsulate(l);
+                }
+            }
+            if (!any) return;
+            var box = go.AddComponent<BoxCollider>();
+            box.center = b.center;
+            box.size = b.size * 0.9f;   // чуть меньше картинки: не цепляться за воздух у краёв
         }
 
         GameObject Piece(string name, Mesh mesh, Vector3 position, Quaternion rotation, Vector3 scale, Color color, Col collider,

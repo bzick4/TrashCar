@@ -7,7 +7,7 @@ namespace JunkRace
     /// Вентилятор / пылесос: в кузове толкает машину туда, куда смотрит. Криво прикрутил — крутишься.
     /// В слоте «Мотор» крутит колёса, но слабо (~0.8 Вт на 1 Н тяги).
     /// </summary>
-    public class ThrusterPart : Part
+    public class ThrusterPart : Part, IBodyTicker
     {
         [SerializeField] float thrust = 2500f;
         [Tooltip("Работает от спец-кнопки, а не от газа (пылесос-ускоритель).")]

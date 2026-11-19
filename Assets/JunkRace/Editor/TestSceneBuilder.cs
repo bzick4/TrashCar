@@ -107,9 +107,9 @@ namespace JunkRace.EditorTools
         //   центр  — просто река: спрыгнул с берега, выплыл по выезду;
         //   справа — горбатый мост с перилами.
         // По краям — красно-белые ограждения. Ось Z — вдоль трассы, вперёд к финишу.
-        const float TrackWidth = 42f, LaneWidth = 14f;
+        const float TrackWidth = YardShuffle.YardHalf * 2f, LaneWidth = 14f;   // ширина свалки
         const float RiverStart = 60f, RiverEnd = 70f;
-        const float TrackStart = -40f, TrackEnd = 145f;
+        const float TrackStart = -YardShuffle.YardDepth, TrackEnd = 145f;
 
         static void BuildTrack()
         {
@@ -204,7 +204,8 @@ namespace JunkRace.EditorTools
         static void BuildYardAndRoute()
         {
             var yard = new GameObject("Свалка_площадка").transform;
-            Slab("Земля_свалки", yard, TrackStart, 0f, new Color(0.45f, 0.42f, 0.38f));
+            var yardGround = Slab("Земля_свалки", yard, TrackStart, 0f, new Color(0.45f, 0.42f, 0.38f));
+            DressYardGround(yardGround);
             float half = TrackWidth / 2f;
             const float segment = 5f;
             for (int s = -1; s <= 1; s += 2)
@@ -352,7 +353,34 @@ namespace JunkRace.EditorTools
         }
 
         /// <summary>Плита земли от z0 до z1 толщиной 4 м (верх на y = 0).</summary>
-        static void Slab(string name, Transform parent, float z0, float z1, Color color) =>
+        /// <summary>
+        /// Земля свалки — текстура Assets/Prefab/Route/Textures/junky.png (утрамбованная земля с гравием и пятнами),
+        /// повтор каждые YardTile метров. Нет картинки — остаётся серой.
+        /// </summary>
+        static void DressYardGround(GameObject ground)
+        {
+            const float YardTile = 8f;
+            string path = RouteModelsFolder + "/Textures/junky.png";
+            if (AssetImporter.GetAtPath(path) is TextureImporter ti && (ti.wrapMode != TextureWrapMode.Repeat || ti.anisoLevel < 4 || ti.maxTextureSize > 1024))
+            {
+                ti.wrapMode = TextureWrapMode.Repeat;
+                ti.maxTextureSize = 1024;
+                ti.anisoLevel = 4;   // землю видно под острым углом — без размытия вдали
+                ti.SaveAndReimport();
+            }
+            var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            if (tex == null) return;
+            var src = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = "junky_ground" };
+            src.SetTexture("_BaseMap", tex);
+            var m = LookBuilder.ConvertMaterial(src);
+            var size = ground.transform.localScale;
+            var tiling = new Vector2(size.x / YardTile, size.z / YardTile);
+            if (m.HasProperty("_BaseMap")) m.SetTextureScale("_BaseMap", tiling);
+            else m.mainTextureScale = tiling;
+            ground.GetComponent<Renderer>().sharedMaterial = m;
+        }
+
+        static GameObject Slab(string name, Transform parent, float z0, float z1, Color color) =>
             Box(name, parent, new Vector3(0f, -2f, (z0 + z1) / 2f), new Vector3(TrackWidth, 4f, z1 - z0), color);
 
         /// <summary>
@@ -424,14 +452,14 @@ namespace JunkRace.EditorTools
             // все моторы, 10 колёс, 2 руля, 1 кресло. Каждый следующий — ещё на машину и запчасти.
 
             // Корпуса (8, 8, 10, 12)
-            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeBathtub(yard, RandomYardPos()));
-            Scaled(yard, new[] { 1, 1, 1, 2 }, () => MakePallet(yard, RandomYardPos()));
-            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeTable(yard, RandomYardPos()));
-            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeWardrobe(yard, RandomYardPos()));
-            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeSofa(yard, RandomYardPos()));
-            Scaled(yard, new[] { 1, 1, 1, 2 }, () => MakeFlamingo(yard, RandomYardPos()));
-            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeDoor(yard, RandomYardPos()));
-            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeSurfboard(yard, RandomYardPos()));
+            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeBathtub(yard, RandomYardPos()), hull: true);
+            Scaled(yard, new[] { 1, 1, 1, 2 }, () => MakePallet(yard, RandomYardPos()), hull: true);
+            Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeTable(yard, RandomYardPos()), hull: true);
+            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeWardrobe(yard, RandomYardPos()), hull: true);
+            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeSofa(yard, RandomYardPos()), hull: true);
+            Scaled(yard, new[] { 1, 1, 1, 2 }, () => MakeFlamingo(yard, RandomYardPos()), hull: true);
+            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeDoor(yard, RandomYardPos()), hull: true);
+            Scaled(yard, new[] { 1, 1, 1, 1 }, () => MakeSurfboard(yard, RandomYardPos()), hull: true);
 
             // Колёса (12, 15, 21, 26)
             Color rubber = new Color(0.15f, 0.15f, 0.15f);
@@ -488,8 +516,16 @@ namespace JunkRace.EditorTools
         /// Сделать counts[3] штук (на четверых); копия номер i есть с того числа игроков,
         /// при котором counts[игроки - 1] > i (PlayerScaled).
         /// </summary>
-        static void Scaled(Transform yard, int[] counts, System.Action make)
+        /// <summary>Мусора на свалке больше в столько раз (корпуса — нет: их и так по числу игроков).</summary>
+        const float JunkMultiplier = 3f;   // втрое больше исходного
+
+        static void Scaled(Transform yard, int[] counts, System.Action make, bool hull = false)
         {
+            if (!hull)
+            {
+                counts = (int[])counts.Clone();
+                for (int k = 0; k < counts.Length; k++) counts[k] = Mathf.CeilToInt(counts[k] * JunkMultiplier);
+            }
             for (int i = 0; i < counts[3]; i++)
             {
                 int before = yard.childCount;
@@ -512,8 +548,8 @@ namespace JunkRace.EditorTools
         /// <summary>Модели из Assets/Prefab/other и сколько штук каждой. Нет в списке — по одной.</summary>
         static readonly Dictionary<string, int> PropCounts = new Dictionary<string, int>
         {
-            { "Block", 3 }, { "Reel", 3 }, { "TV02", 3 },
-            { "Car0", 2 }, { "Car1", 2 }, { "GasPump", 2 }, { "Electric03", 2 },
+            { "Block", 9 }, { "Reel", 9 }, { "TV02", 9 },          // мелочь — втрое больше исходного
+            { "Car0", 5 }, { "Car1", 5 }, { "GasPump", 4 }, { "Electric03", 5 },
             { "Bus", 1 }, { "Tank", 1 }, { "Windmill", 1 },
         };
 
@@ -645,6 +681,10 @@ namespace JunkRace.EditorTools
         {
             new Vector3(-9f, 0f, -24f), new Vector3(2f, 0f, -26f), new Vector3(10f, 0f, -21f),
             new Vector3(-11f, 0f, -9f), new Vector3(0f, 0f, -7f), new Vector3(11f, 0f, -8f),
+            // Ещё куч: 16 вместо 6. Где именно они встанут — решает YardShuffle по сиду.
+            new Vector3(-20f, 0f, -40f), new Vector3(18f, 0f, -38f), new Vector3(0f, 0f, -48f),
+            new Vector3(-22f, 0f, -18f), new Vector3(22f, 0f, -16f), new Vector3(-6f, 0f, -36f),
+            new Vector3(-24f, 0f, -50f), new Vector3(24f, 0f, -50f), new Vector3(14f, 0f, -30f), new Vector3(-14f, 0f, -30f),
         };
 
         static List<JunkPile> BuildPiles()
@@ -840,7 +880,7 @@ namespace JunkRace.EditorTools
         }
 
         static Vector3 RandomYardPos() =>
-            new Vector3(Random.Range(-12f, 12f), 1.5f, Random.Range(-24f, -3f));   // не у старта игроков (z < -26)
+            new Vector3(Random.Range(-YardShuffle.YardHalf + 9f, YardShuffle.YardHalf - 9f), 1.5f, Random.Range(-24f, -3f));   // не у старта игроков (z < -26); при запуске YardShuffle разложит по всей свалке
 
         // ---------------- Корпуса ----------------
         // Начало координат корпуса — его «пол» (там, где стоят руль и моторы), если не сказано иное.

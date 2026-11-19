@@ -37,6 +37,7 @@ namespace JunkRace
         /// <summary>Строка характеристики: иконка, подпись, значение (с цветом), стрелка лучше/хуже, шкала 0..1 (или нет).</summary>
         struct StatRow { public string Icon, Label, Value; public int Arrow; public float Bar; }
         readonly List<StatRow> rows = new List<StatRow>();
+        readonly List<(string name, bool ready)> buildPlayers = new List<(string, bool)>();
         readonly StringBuilder footer = new StringBuilder();
         /// <summary>Пишем на светлой бумаге (Tab): цвета потемнее, иначе на бежевом не читаются.</summary>
         bool onPaper;
@@ -47,6 +48,7 @@ namespace JunkRace
 
         void Awake()
         {
+            useGUILayout = false;   // OnGUI рисует без GUILayout — служебный проход раскладки не нужен
             player = GetComponent<PlayerController>();
             carry = GetComponent<PlayerCarry>();
         }
@@ -98,10 +100,6 @@ namespace JunkRace
                 var v = player.InVehicle ? player.CurrentVehicle : NearestVehicle(null);
                 DrawVehiclePanel(v);
             }
-            else
-            {
-                GUI.Label(new Rect(20f, 64f, 400f, 30f), "<color=#C8C2B8>Tab — характеристики машины</color>", text);   // слева: справа карточка детали
-            }
 
             GUI.matrix = Matrix4x4.identity;
         }
@@ -144,9 +142,7 @@ namespace JunkRace
                 Vehicle target = point != null ? point.Owner.Vehicle : NearestVehicle(part);
                 if (target != null)
                 {
-                    sb.Append("\n<b>Если прикрутить к «").Append(target.RootPart.DisplayName).Append('»');
-                    if (point != null) sb.Append(" → ").Append(point.Label);
-                    sb.Append(":</b>\n");
+                    sb.Append("\n<b>Если прикрутить к корпусу:</b>\n");
                     AppendSlotEffect(part, point != null ? point.Slot : part.NativeSlot, point != null && point.Steers);
                     AppendComparison(VehicleStats.Estimate(target), VehicleStats.EstimateWith(target, part, point));
                 }
@@ -176,13 +172,18 @@ namespace JunkRace
             float rowsH = RowsHeight(), footH = footer.Length > 0 ? text.CalcHeight(new GUIContent(footer.ToString()), cw) + 6f : 0f;
             float divH = rows.Count > 0 ? 26f : 0f;
             float h = 74f + tagH + 8f + bodyH + divH + rowsH + footH + 44f;
-            var rect = new Rect(screenW - W - 24f, 104f, W, Mathf.Min(h, 960f));
+            var rect = new Rect(screenW - W - 24f, 40f, W, Mathf.Min(h, 1020f));
 
             NineSlice(rect, cardPanelStyle, 0.55f);
             float plateW = W + 16f, plateH = plateW * cardTitle.height / cardTitle.width;
             var plate = new Rect(rect.x - 8f, rect.y - plateH * 0.35f, plateW, plateH);
             GUI.DrawTexture(plate, cardTitle);
-            GUI.Label(new Rect(plate.x + 40f, plate.y, plate.width - 80f, plate.height), part.DisplayName, plateText);
+            // Длинное название («Утка-клаксон (бесполезна)») — шрифт помельче, чтобы влезло в плашку.
+            var nameRect = new Rect(plate.x + 44f, plate.y, plate.width - 88f, plate.height);
+            plateText.fontSize = 28;
+            var nameContent = new GUIContent(part.DisplayName);
+            while (plateText.fontSize > 16 && plateText.CalcSize(nameContent).x > nameRect.width) plateText.fontSize--;
+            GUI.Label(nameRect, nameContent, plateText);
 
             float y = plate.yMax + 4f;
             float tagW = tagH * cardTag.width / cardTag.height;
@@ -412,16 +413,46 @@ namespace JunkRace
             const float W = 470f, PadX = 58f, Top = 120f, Bottom = 78f, S = 0.5f;
             float cw = W - PadX * 2f;
             float headH = paperTitle.CalcHeight(new GUIContent(header), cw);
+
+            // Сборка: что делать, чего не хватает, кто готов (раньше висело вверху экрана).
+            var timer = RaceTimer.Instance;
+            bool building = timer != null && timer.Phase == MatchPhase.Build;
+            string buildText = null;
+            buildPlayers.Clear();
+            if (building)
+            {
+                ulong me = World.LocalId;
+                buildText = timer.BuildHint(me);
+                string problem = RaceTimer.ProblemOf(me);
+                if (problem != null) buildText += "\n<color=" + CDown + ">" + problem + "</color>";
+                if (!GameSession.IsDevRoom) foreach (var a in World.All()) buildPlayers.Add((a.DisplayName, timer.IsBuildReady(a.ClientId)));
+            }
+            float buildH = buildText != null ? paperText.CalcHeight(new GUIContent(buildText), cw) + buildPlayers.Count * 30f + 16f : 0f;
             string parts = sb.ToString(), foot = footer.ToString();
             float footH = foot.Length > 0 ? paperText.CalcHeight(new GUIContent(foot), cw) + 6f : 0f;
             float partsH = parts.Length > 0 ? paperText.CalcHeight(new GUIContent(parts), cw) + 10f : 0f;
-            float h = Top + headH + 8f + RowsHeight() + footH + partsH + Bottom;
-            var rect = new Rect(20f, 96f, W, Mathf.Min(h, 960f));
+            float h = Top + headH + 8f + buildH + RowsHeight() + footH + partsH + Bottom;
+            var rect = new Rect(20f, 16f, W, Mathf.Min(h, 1040f));
             NineSlice(rect, statsPanelStyle, S);
 
             float x = rect.x + PadX, y = rect.y + Top;
             GUI.Label(new Rect(x, y, cw, headH), header, paperTitle);
             y += headH + 8f;
+            if (buildText != null)
+            {
+                float th = paperText.CalcHeight(new GUIContent(buildText), cw);
+                GUI.Label(new Rect(x, y, cw, th), buildText, paperText);
+                y += th + 4f;
+                foreach (var (name, ready) in buildPlayers)
+                {
+                    string key = ready ? "#icon_status_ready" : "#icon_status_building";
+                    if (!icons.TryGetValue(key, out var ic)) icons[key] = ic = Resources.Load<Texture2D>("UI/hud/" + key.Substring(1));
+                    if (ic != null) GUI.DrawTexture(new Rect(x, y + 2f, 26f, 26f), ic, ScaleMode.ScaleToFit);
+                    GUI.Label(new Rect(x + 34f, y, cw - 34f, 30f), name + (ready ? " — <b>готов</b>" : " — собирает"), paperText);
+                    y += 30f;
+                }
+                y += 12f;
+            }
             y = DrawRows(x, y, cw, paperText, paperValue);
             if (footH > 0f) { GUI.Label(new Rect(x, y + 4f, cw, footH), foot, paperText); y += footH; }
             if (partsH > 0f)

@@ -115,3 +115,7 @@ InitTestScene*.unity*
 /ProfilerCaptures/
 *.csproj
 *.slnx
+
+# Музыка без лицензии: только локально, в репозиторий не кладём
+/Assets/JunkRace/Resources/Audio/Music/
+/Assets/JunkRace/Resources/Audio/Music.meta

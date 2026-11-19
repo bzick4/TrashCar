@@ -7,6 +7,8 @@ namespace JunkRace
     /// <summary>Тест-комната: подписи над свободно лежащими деталями поблизости (имя и категория).</summary>
     public class DevRoomLabels : MonoBehaviour
     {
+        void Awake() => useGUILayout = false;   // OnGUI без GUILayout — без лишнего прохода раскладки
+
         const float Range = 12f;
         readonly List<Part> parts = new List<Part>();
         float nextScan;

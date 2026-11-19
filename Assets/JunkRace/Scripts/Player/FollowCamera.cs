@@ -10,6 +10,8 @@ namespace JunkRace
     /// </summary>
     public class FollowCamera : MonoBehaviour
     {
+        void Awake() => useGUILayout = false;   // OnGUI без GUILayout — без лишнего прохода раскладки
+
         [SerializeField] PlayerController player;
 
         [Header("Первое лицо")]
@@ -166,7 +168,11 @@ namespace JunkRace
             bodyRenderers = player.GetComponentsInChildren<Renderer>(true);
             foreach (var r in bodyRenderers)
             {
-                if (!r || r.GetComponentInParent<Part>() != null) continue;
+                if (!r) continue;
+                // Деталь в руках (она под игроком) — не тело. Но если сам игрок сидит в машине, над ним тоже
+                // есть Part (кресло, корпус) — это не повод его пропускать, иначе тело так и останется скрытым.
+                var part = r.GetComponentInParent<Part>();
+                if (part != null && part.transform.IsChildOf(player.transform)) continue;
                 bool arm = IsArm(r.transform);
                 r.shadowCastingMode = hide && !arm ? ShadowCastingMode.ShadowsOnly : ShadowCastingMode.On;
             }

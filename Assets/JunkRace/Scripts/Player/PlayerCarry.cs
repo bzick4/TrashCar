@@ -120,6 +120,7 @@ namespace JunkRace
 
         void Awake()
         {
+            useGUILayout = false;   // OnGUI рисует без GUILayout — служебный проход раскладки не нужен
             player = GetComponent<PlayerController>();
             if (holdPoint == null)
             {

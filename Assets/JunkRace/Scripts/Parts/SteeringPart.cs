@@ -43,6 +43,7 @@ namespace JunkRace
         {
             base.OnDetached();
             steer = 0f;
+            if (wheelVisual) wheelVisual.localRotation = Quaternion.identity;   // Update больше не крутится
         }
 
         void Update()

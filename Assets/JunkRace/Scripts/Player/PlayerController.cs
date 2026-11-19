@@ -52,6 +52,7 @@ namespace JunkRace
 
         void Awake()
         {
+            useGUILayout = false;   // OnGUI рисует без GUILayout — служебный проход раскладки не нужен
             cc = GetComponent<CharacterController>();
             carry = GetComponent<PlayerCarry>();
             Controls = new GameControls();
@@ -100,14 +101,74 @@ namespace JunkRace
             }
 
             Move();
+            CheckFootFall();
             if (RaceTimer.InteractionLocked) return;   // ждём остальных: бегать можно, садиться и вертеть — нет
             if (Controls.Enter.WasPressedThisFrame()) TryEnterVehicle();
-            if (Controls.Rotate.WasPressedThisFrame() && carry != null)
+            if (Controls.Rotate.WasPressedThisFrame())
             {
                 // R: перевернуть корпус (в руках или под прицелом) — стол ножками вверх или вниз.
-                var target = carry.Held != null ? carry.Held : carry.LookTarget;
+                // Корпуса рядом нет — сброс пешком на дорогу (как R за рулём).
+                var target = carry == null ? null : carry.Held != null ? carry.Held : carry.LookTarget;
                 if (target != null && target.TryGetComponent(out HullFlip flip)) World.RequestFlipHull(flip);
+                else if (carry == null || carry.Held == null) ResetOnFoot();
             }
+        }
+
+        // ---- Пешком упал с трассы: обратно на дорогу ----
+
+        const float FootFallY = -25f;          // ниже — точно улетел с карты
+        const float FootFallDelay = 1f;        // сколько лететь, прежде чем вернуть
+        Vector3 lastSafeFoot;
+        bool hasSafeFoot;
+        float footFallTime, footCheckTimer, safeSaveTimer;
+        bool footBelowRoad;
+
+        /// <summary>
+        /// Выбросило из машины и сорвался с горной дороги (или улетел за край свалки): через секунду
+        /// падения ставим обратно на ближайшую дорогу. По ровной земле рядом с трассой гулять можно —
+        /// возвращаем только тех, кто ниже дороги на RouteMap.FallDepth или ниже края карты.
+        /// </summary>
+        void CheckFootFall()
+        {
+            float dt = Time.deltaTime;
+            Vector3 p = transform.position;
+            var route = RouteMap.Current;
+
+            footCheckTimer -= dt;
+            if (footCheckTimer <= 0f)
+            {
+                footCheckTimer = 0.25f;   // поиск по маршруту не бесплатный
+                footBelowRoad = route != null && route.Nearest(p, false, out var h) && h.Below > route.FallDepth;
+            }
+            bool falling = p.y < FootFallY || footBelowRoad;
+
+            if (!falling && cc.isGrounded)
+            {
+                safeSaveTimer -= dt;
+                if (safeSaveTimer <= 0f) { safeSaveTimer = 0.5f; lastSafeFoot = p; hasSafeFoot = true; }
+            }
+
+            footFallTime = falling ? footFallTime + dt : 0f;
+            if (footFallTime > FootFallDelay) ResetOnFoot();
+        }
+
+        /// <summary>Поставить игрока на ближайшую дорогу (от последнего места, где он твёрдо стоял).</summary>
+        void ResetOnFoot()
+        {
+            footFallTime = 0f;
+            var route = RouteMap.Current;
+            Vector3 from = hasSafeFoot ? lastSafeFoot : transform.position;
+            Vector3 to;
+            Vector3 fwd = transform.forward;
+            if (route != null && route.ResetPose(from, 2f, 1.5f, out var pos, out var f)) { to = pos + Vector3.up * 1.2f; fwd = f; }
+            else if (hasSafeFoot) to = lastSafeFoot + Vector3.up * 0.5f;
+            else return;
+            verticalVelocity = 0f;
+            knockback = Vector3.zero;
+            Teleport(to);
+            fwd.y = 0f;
+            if (fwd.sqrMagnitude > 0.01f) transform.rotation = Quaternion.LookRotation(fwd.normalized);
+            footBelowRoad = false;
         }
 
         void Move(bool allowInput = true)

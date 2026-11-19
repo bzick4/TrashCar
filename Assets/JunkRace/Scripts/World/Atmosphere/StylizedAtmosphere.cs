@@ -112,7 +112,17 @@ namespace JunkRace
             PushGlobals();
         }
 
-        void Update() => PushGlobals();
+        // Глобальные параметры дымки — только когда что-то поменялось (солнце повернули, пресет сменили),
+        // а не каждый кадр. Направление солнца сверяем с прошлым.
+        Vector3 pushedSun = new Vector3(float.NaN, 0f, 0f);
+        Light cachedSun;
+
+        void Update()
+        {
+            if (cachedSun == null) cachedSun = FindSun();
+            Vector3 toSun = cachedSun != null ? -cachedSun.transform.forward : Vector3.up;
+            if (toSun != pushedSun) PushGlobals();
+        }
 
         // ================= Применение =================
 
@@ -122,6 +132,7 @@ namespace JunkRace
             Vector3 toSun = Vector3.up;
             var sun = FindSun();
             if (sun != null) toSun = -sun.transform.forward;
+            pushedSun = toSun;
 
             // SetGlobalColor сам переводит цвет в линейное пространство, если проект в Linear.
             Shader.SetGlobalColor(NearId, nearHaze);

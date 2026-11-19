@@ -61,6 +61,14 @@ namespace JunkRace
             else if (visual != null) halfWidth = MeasureHalfWidth();   // пока шина стоит прямо
         }
 
+        public override void OnDetached()
+        {
+            base.OnDetached();
+            // LateUpdate выключен вместе с деталью: шину — на место, без подвески и поворота.
+            if (visual != null) { visual.localPosition = Vector3.zero; visual.localRotation = Quaternion.identity; }
+            hasLastPos = false;
+        }
+
         protected override void LateUpdate()
         {
             if (visual == null) return;
@@ -80,6 +88,16 @@ namespace JunkRace
             else { visual.localPosition = Vector3.zero; hasLastPos = false; }
         }
 
+        Collider lastGround;
+        bool lastGroundIsWater;
+
+        /// <summary>Под колесом вода? Под колесом обычно одна и та же поверхность — запоминаем ответ.</summary>
+        bool IsWater(Collider c)
+        {
+            if (c != lastGround) { lastGround = c; lastGroundIsWater = c.TryGetComponent<WaterZone>(out _); }
+            return lastGroundIsWater;
+        }
+
         Vector3 lastPos;
         bool hasLastPos;
         float dustDebt, lastSpeed, dustAccel;
@@ -92,7 +110,7 @@ namespace JunkRace
             Vector3 vel = hasLastPos && dt > 1e-4f ? (p - lastPos) / dt : Vector3.zero;
             lastPos = p;
             hasLastPos = true;
-            if (!grounded || hit.collider == null || hit.collider.GetComponent<WaterZone>() != null) { dustDebt = 0f; return; }
+            if (!grounded || hit.collider == null || IsWater(hit.collider)) { dustDebt = 0f; return; }
             float speed = vel.magnitude;
             // Разгон — сглаженное ускорение колеса: на старте и при наборе скорости пыли много, в ровной езде — чуть-чуть.
             float accel = dt > 1e-4f ? (speed - lastSpeed) / dt : 0f;

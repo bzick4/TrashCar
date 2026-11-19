@@ -8,6 +8,8 @@ namespace JunkRace
     /// </summary>
     public class RemoteAvatar : MonoBehaviour, IAvatar
     {
+        void Awake() => useGUILayout = false;   // OnGUI без GUILayout — без лишнего прохода раскладки
+
 
         public ulong ClientId { get; private set; }
         public string DisplayName { get; set; }

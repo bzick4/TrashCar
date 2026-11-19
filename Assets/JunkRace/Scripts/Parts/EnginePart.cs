@@ -25,6 +25,12 @@ namespace JunkRace
             if (shaker) shakerBase = shaker.localPosition;
         }
 
+        public override void OnDetached()
+        {
+            base.OnDetached();
+            if (shaker) shaker.localPosition = shakerBase;   // Update выключен — ставим корпус мотора на место
+        }
+
         void Update()
         {
             if (!shaker) return;

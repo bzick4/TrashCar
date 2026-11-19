@@ -203,6 +203,11 @@ namespace JunkRace
 
         protected virtual void Awake()
         {
+            // Покадровые методы (вид поворота, шина, тряска мотора, лопасти) нужны только прикрученной детали.
+            // Лежащие на свалке и в руках — выключены; включает/выключает OnAttached/OnDetached.
+            // Остальное от этого не зависит: физику деталей (Tick*) вызывает машина, коллизии ловит корпус.
+            enabled = false;
+
             // Значения из ассета-описания — первым делом, до того как кто-то прочитает массу и прочее.
             if (definition != null) definition.ApplyTo(this);
 
@@ -362,8 +367,8 @@ namespace JunkRace
                 transform.localRotation = Quaternion.Euler(0f, wheelSteerAngle, 0f);
         }
 
-        public virtual void OnAttached() { wheelSteerAngle = 0f; }
-        public virtual void OnDetached() { wheelSteerAngle = 0f; }
+        public virtual void OnAttached() { wheelSteerAngle = 0f; enabled = true; }
+        public virtual void OnDetached() { wheelSteerAngle = 0f; enabled = false; }
 
         public void SetCollidersEnabled(bool enabled)
         {
@@ -451,7 +456,9 @@ namespace JunkRace
             {
                 var h = hitBuffer[i];
                 if (Vehicle != null && h.rigidbody == Vehicle.Body) continue;
-                if (h.collider.GetComponentInParent<PlayerController>()) continue;
+                // Игрок — это CharacterController: проверка типа вместо поиска компонента вверх по иерархии
+                // (луч колеса бьётся несколько раз за кадр на каждом колесе).
+                if (h.collider is CharacterController) continue;
                 if (h.distance < bestDist) { bestDist = h.distance; best = h; found = true; }
             }
             return found;

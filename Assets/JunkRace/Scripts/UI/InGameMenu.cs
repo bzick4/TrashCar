@@ -30,6 +30,7 @@ namespace JunkRace
         void SetOpen(bool open)
         {
             IsOpen = open;
+            if (!open) soundPage = false;
             Cursor.lockState = open ? CursorLockMode.None : CursorLockMode.Locked;
             Cursor.visible = open;
             // В коопе мир не останавливаем: другие игроки продолжают.
@@ -38,6 +39,7 @@ namespace JunkRace
 
         // Стили — один раз: новый GUIStyle в каждом OnGUI копит нативную память и тормозит со временем.
         static GUIStyle hudStyle;
+        bool soundPage;
 
         void OnGUI()
         {
@@ -60,10 +62,22 @@ namespace JunkRace
             GUI.DrawTexture(new Rect(0, 0, w, 1080), MenuStyles.BackgroundTex);
             GUI.color = Color.white;
 
-            var panel = new Rect((w - 620f) / 2f, 160f, 620f, 800f);
+            var panel = new Rect((w - 620f) / 2f, 110f, 620f, 880f);   // +кнопка «Звук»
             GUI.Box(panel, GUIContent.none, MenuStyles.Panel);
             float inset = MenuStyles.HasArt ? 74f : 40f;
             GUILayout.BeginArea(new Rect(panel.x + inset, panel.y + inset, panel.width - inset * 2f, panel.height - inset * 2f));
+
+            if (soundPage)
+            {
+                GUILayout.Label("Звук", MenuStyles.Header);
+                GUILayout.Space(16);
+                GameAudio.DrawSliders(MenuStyles.Text, panel.width - inset * 2f);
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Назад", MenuStyles.Button)) { GameAudio.Save(); soundPage = false; }
+                GUILayout.EndArea();
+                GUI.matrix = Matrix4x4.identity;
+                return;
+            }
 
             GUILayout.Label(GameSession.Mode == GameMode.Solo ? "Пауза" : "Меню", MenuStyles.Header);
             if (GameSession.Mode != GameMode.Solo) GUILayout.Label("Игра идёт, остальные играют дальше", MenuStyles.Hint);
@@ -82,6 +96,8 @@ namespace JunkRace
             int f = QualitySetup.FpsIndex;
             if (GUILayout.Button($"Лимит кадров: {QualitySetup.FpsNames[f]}", MenuStyles.Button))
                 QualitySetup.FpsIndex = (f + 1) % QualitySetup.FpsNames.Length;
+            GUILayout.Space(12);
+            if (GUILayout.Button("Звук", MenuStyles.Button)) soundPage = true;
             GUILayout.Space(12);
             if (GUILayout.Button("В меню", MenuStyles.Button))
             {

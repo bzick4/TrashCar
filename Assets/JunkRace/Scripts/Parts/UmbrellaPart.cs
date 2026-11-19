@@ -7,7 +7,7 @@ namespace JunkRace
     /// Зонт: в кузове на спец-кнопке раскрывается и тормозит падение.
     /// Где бы ни стоял, ловит воздух (airDrag) — на багажнике просто снижает скорость.
     /// </summary>
-    public class UmbrellaPart : Part
+    public class UmbrellaPart : Part, IBodyTicker
     {
         [SerializeField] float drag = 150f;
         [SerializeField] Transform canopy;
@@ -34,6 +34,8 @@ namespace JunkRace
         {
             base.OnDetached();
             open = false;
+            // Update выключен вместе с деталью — закрываем купол сразу.
+            if (canopy) canopy.localScale = new Vector3(0.5f, canopy.localScale.y, 0.5f);
         }
 
         void Update()
