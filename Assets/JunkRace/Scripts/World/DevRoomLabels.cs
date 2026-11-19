@@ -1,3 +1,4 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -52,3 +53,4 @@ namespace JunkRace
         }
     }
 }
+#endif

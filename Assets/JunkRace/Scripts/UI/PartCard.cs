@@ -100,7 +100,7 @@ namespace JunkRace
             }
             else
             {
-                GUI.Label(new Rect(w - 360f, 70f, 340f, 30f), "<color=#C8C2B8>Tab — характеристики машины</color>", text);
+                GUI.Label(new Rect(20f, 64f, 400f, 30f), "<color=#C8C2B8>Tab — характеристики машины</color>", text);   // слева: справа карточка детали
             }
 
             GUI.matrix = Matrix4x4.identity;

@@ -27,7 +27,9 @@ namespace JunkRace
         /// </summary>
         public static void Apply(int seed, Vector3 gate, int players)
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (GameSession.IsDevRoom) { DevLayout(seed, gate); return; }
+#endif
             // 1. Сколько деталей: сцена собрана на четверых, лишнее выключаем.
             foreach (var ps in Object.FindObjectsByType<PlayerScaled>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 ps.gameObject.SetActive(ps.MinPlayers <= players);
@@ -107,6 +109,8 @@ namespace JunkRace
         }
 
         // ============================ Тест-комната ============================
+        // Только в редакторе и Development Build — в обычную сборку игры этот код не попадает.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
 
         const int DevCopies = 4;   // мелких деталей каждого вида: хватит, чтобы собрать машину
 
@@ -207,6 +211,7 @@ namespace JunkRace
                 if (!rb.isKinematic) { rb.linearVelocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
             }
         }
+#endif
 
         /// <summary>Свободно лежит на свалке: не прикручена (и не стоит в сцене на другой детали), не в руках.</summary>
         static bool IsLoose(Part part)

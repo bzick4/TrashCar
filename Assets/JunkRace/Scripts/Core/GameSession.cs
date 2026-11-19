@@ -27,14 +27,28 @@ namespace JunkRace
         /// <summary>Тест-комната разработчика: все детали разложены рядами, сборка без таймера. Только соло.</summary>
         public static bool DevRoom;
 
+        /// <summary>
+        /// Тест-комната есть только в редакторе и в Development Build. В обычной сборке игры её нет:
+        /// ни кнопки в меню, ни раскладки, ни подписей.
+        /// </summary>
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        public const bool DevRoomAvailable = true;
+#else
+        public const bool DevRoomAvailable = false;
+#endif
+
         /// <summary>Сейчас тест-комната (в сетевой игре — никогда).</summary>
         public static bool IsDevRoom
         {
             get
             {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
                 if (!DevRoom) return false;
                 var nm = NetworkManager.Singleton;
                 return nm == null || !nm.IsListening;
+#else
+                return false;
+#endif
             }
         }
 
@@ -47,9 +61,11 @@ namespace JunkRace
 
         public static void StartDevRoom()
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             Mode = GameMode.Solo;
             DevRoom = true;
             SceneManager.LoadScene(TrackScene);
+#endif
         }
 
         /// <summary>Хост (или соло) может перезапустить заезд.</summary>

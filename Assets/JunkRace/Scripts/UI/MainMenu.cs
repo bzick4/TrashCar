@@ -185,9 +185,12 @@ namespace JunkRace
             }
             if (Event.current.type == EventType.Repaint) soloRect = GUILayoutUtility.GetLastRect();
             GUILayout.Space(8);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // Только для разработки: в обычной сборке игры кнопки нет.
             if (Button("Тест-комната", "wrench", GUILayout.Width(bw)) && !busy) GameSession.StartDevRoom();
             HintOnArt("все детали рядами, сборка без таймера");
             GUILayout.Space(8);
+#endif
             if (Button("Кооп", "coop", GUILayout.Width(bw)) && !busy)
             {
                 message = Session == null ? "В сцене нет NetworkManager с CoopSession. Пересобери сцены через меню JunkRace." : null;
