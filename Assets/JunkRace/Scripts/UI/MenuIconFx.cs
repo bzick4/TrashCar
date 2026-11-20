@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using DG.Tweening;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace JunkRace
 {
@@ -11,7 +12,7 @@ namespace JunkRace
     ///   • Куча («Кооп»): наведение — по одной вылетают детали; нажатие — выбрасывает много деталей и оседает.
     ///
     /// Состояния иконок (раскрутка, сплющивание, тряска, «дыхание», оседание, задержка перед переходом)
-    /// ведёт DOTween — твины крутят обычные float-поля, а IMGUI их просто рисует.
+    /// ведёт DOTween — твины крутят обычные float-поля, а рисуют их картинки UGUI в слое Layer.
     /// Летящие частицы (грязь, детали, пыль) — простой цикл с гравитацией: так дешевле, чем твин на каждую.
     ///
     /// Все твины SetUpdate(true) — идут и при timeScale = 0. Картинки — Resources/UI/Anim;
@@ -100,7 +101,7 @@ namespace JunkRace
         bool pileLaunch;
         float pileSpawnTimer;
 
-        // Где рисуем (обновляется из OnGUI).
+        // Где рисуем (обновляется в Draw).
         Vector2 wheelCenter, pileCenter;
         // Размеры — от высоты кнопки (ставятся в Draw): иконка сидит на правом краю кнопки.
         float WheelSize = 120f;
@@ -316,9 +317,29 @@ namespace JunkRace
         // ======================= Отрисовка =======================
 
         /// <summary>Рисовать вне BeginArea/BeginGroup, чтобы детали не обрезались краем области.</summary>
+        /// <summary>
+        /// Слой UGUI, куда рисуются иконки и частицы. Координаты — как в IMGUI: от левого верхнего угла слоя, y вниз.
+        /// </summary>
+        public RectTransform Layer;
+
+        sealed class Quad
+        {
+            public RectTransform Outer;   // позиция и сплющивание (без поворота)
+            public RectTransform Inner;   // поворот
+            public RawImage Image;
+        }
+
+        readonly List<Quad> pool = new List<Quad>();
+        int used;
+
+        /// <summary>
+        /// Нарисовать кадр. soloButton, coopButton — прямоугольники кнопок в координатах слоя (y вниз).
+        /// Зовётся каждый кадр после Update.
+        /// </summary>
         public void Draw(Rect soloButton, Rect coopButton)
         {
-            if (!Available || Event.current.type != EventType.Repaint) return;
+            if (!Available || Layer == null) return;
+            used = 0;
 
             // Иконка размером с высоту кнопки, центр — на её правом краю (наполовину заходит на кнопку).
             WheelSize = soloButton.height * 1.0f;
@@ -327,8 +348,8 @@ namespace JunkRace
             wheelCenter = new Vector2(soloButton.xMax - WheelSize * 0.05f, soloButton.center.y);
             pileCenter = new Vector2(coopButton.xMax + PileSize.x * 0.05f, coopButton.center.y);
 
-            GUI.DrawTexture(new Rect(wheelCenter.x - WheelSize * 0.85f, wheelCenter.y - WheelSize * 0.8f, WheelSize * 1.7f, WheelSize * 1.6f), backdrop);
-            GUI.DrawTexture(new Rect(pileCenter.x - PileSize.x * 0.8f, pileCenter.y - PileSize.y * 1f, PileSize.x * 1.6f, PileSize.y * 2f), backdrop);
+            Put(backdrop, wheelCenter + new Vector2(0f, WheelSize * 0.0f), new Vector2(WheelSize * 1.7f, WheelSize * 1.6f), 0f, Vector2.one, 1f);
+            Put(backdrop, new Vector2(pileCenter.x, pileCenter.y), new Vector2(PileSize.x * 1.6f, PileSize.y * 2f), 0f, Vector2.one, 1f);
 
             DrawParticles(true);
 
@@ -336,56 +357,66 @@ namespace JunkRace
             float sx = 1f + 0.38f * wheelSquash;
             float sy = 1f - 0.24f * wheelSquash;
             Vector2 wc = wheelCenter + new Vector2(wheelShake.x, WheelSize * (1f - sy) * 0.5f + wheelShake.y);
-            DrawSpinningOval(wheelTex, wc, WheelSize, new Vector2(sx, sy), wheelAngle);
+            Put(wheelTex, wc, new Vector2(WheelSize, WheelSize), wheelAngle, new Vector2(sx, sy), 1f);
 
             // Куча: «дыхание» при наведении + вспучивание/оседание от нижнего края.
             float py = pileScaleY + pileBreath * 0.03f;
             float px = 1f + (1f - pileScaleY) * 0.45f - pileBreath * 0.015f;
             Vector2 ps = new Vector2(PileSize.x * px, PileSize.y * py);
             float bottom = pileCenter.y + PileSize.y * 0.5f;
-            GUI.DrawTexture(new Rect(pileCenter.x - ps.x * 0.5f, bottom - ps.y, ps.x, ps.y), pileTex, ScaleMode.StretchToFill, true);
+            Put(pileTex, new Vector2(pileCenter.x, bottom - ps.y * 0.5f), ps, 0f, Vector2.one, 1f);
 
             DrawParticles(false);
+
+            for (int i = used; i < pool.Count; i++)
+                if (pool[i].Outer.gameObject.activeSelf) pool[i].Outer.gameObject.SetActive(false);
         }
 
         void DrawParticles(bool behind)
         {
-            var color = GUI.color;
             foreach (var p in particles)
             {
                 if (p.Behind != behind) continue;
                 float a = Mathf.Clamp01(p.Life / Mathf.Min(0.3f, p.MaxLife));
-                GUI.color = new Color(color.r, color.g, color.b, color.a * a);
                 float aspect = p.Tex.height / (float)p.Tex.width;
-                DrawRotated(p.Tex, p.Pos, new Vector2(p.Size, p.Size * aspect), p.Rot);
+                Put(p.Tex, p.Pos, new Vector2(p.Size, p.Size * aspect), p.Rot, Vector2.one, a);
             }
-            GUI.color = color;
         }
 
         /// <summary>
-        /// Поворот вокруг центра. Свою матрицу собираем сами: GUIUtility.RotateAroundPivot
-        /// промахивается с центром, когда GUI.matrix масштабирован (а меню масштабируется под 1080p).
+        /// Картинка с центром center и размером size; angle — по часовой (как было в IMGUI),
+        /// scale — сплющивание без поворота (овал колеса остаётся горизонтальным). Порядок вызовов = порядок слоёв.
         /// </summary>
-        static void DrawRotated(Texture2D tex, Vector2 center, Vector2 size, float angle)
+        void Put(Texture2D tex, Vector2 center, Vector2 size, float angle, Vector2 scale, float alpha)
         {
-            var saved = GUI.matrix;
-            GUI.matrix = saved
-                * Matrix4x4.TRS(new Vector3(center.x, center.y, 0f), Quaternion.Euler(0f, 0f, angle), Vector3.one)
-                * Matrix4x4.TRS(new Vector3(-center.x, -center.y, 0f), Quaternion.identity, Vector3.one);
-            GUI.DrawTexture(new Rect(center.x - size.x * 0.5f, center.y - size.y * 0.5f, size.x, size.y), tex, ScaleMode.StretchToFill, true);
-            GUI.matrix = saved;
-        }
-
-        /// <summary>Колесо: картинка крутится, а сплющивание в овал остаётся горизонтальным.</summary>
-        static void DrawSpinningOval(Texture2D tex, Vector2 center, float size, Vector2 scale, float angle)
-        {
-            var saved = GUI.matrix;
-            GUI.matrix = saved
-                * Matrix4x4.TRS(new Vector3(center.x, center.y, 0f), Quaternion.identity, new Vector3(scale.x, scale.y, 1f))
-                * Matrix4x4.TRS(Vector3.zero, Quaternion.Euler(0f, 0f, angle), Vector3.one)
-                * Matrix4x4.TRS(new Vector3(-center.x, -center.y, 0f), Quaternion.identity, Vector3.one);
-            GUI.DrawTexture(new Rect(center.x - size * 0.5f, center.y - size * 0.5f, size, size), tex, ScaleMode.StretchToFill, true);
-            GUI.matrix = saved;
+            if (tex == null) return;
+            Quad q;
+            if (used < pool.Count) q = pool[used];
+            else
+            {
+                var outer = new GameObject("Fx", typeof(RectTransform)).GetComponent<RectTransform>();
+                outer.SetParent(Layer, false);
+                outer.anchorMin = outer.anchorMax = new Vector2(0f, 1f);
+                outer.pivot = new Vector2(0.5f, 0.5f);
+                var inner = new GameObject("Img", typeof(RectTransform)).GetComponent<RectTransform>();
+                inner.SetParent(outer, false);
+                inner.anchorMin = Vector2.zero; inner.anchorMax = Vector2.one;
+                inner.offsetMin = inner.offsetMax = Vector2.zero;
+                var img = inner.gameObject.AddComponent<RawImage>();
+                img.raycastTarget = false;
+                q = new Quad { Outer = outer, Inner = inner, Image = img };
+                pool.Add(q);
+            }
+            used++;
+            if (!q.Outer.gameObject.activeSelf) q.Outer.gameObject.SetActive(true);
+            q.Outer.SetSiblingIndex(used - 1);
+            q.Outer.anchoredPosition = new Vector2(center.x, -center.y);
+            q.Outer.sizeDelta = size;
+            q.Outer.localScale = new Vector3(scale.x, scale.y, 1f);
+            q.Inner.localRotation = Quaternion.Euler(0f, 0f, -angle);   // UGUI крутит против часовой
+            if (q.Image.texture != tex) q.Image.texture = tex;
+            var c = q.Image.color;
+            if (c.a != alpha) q.Image.color = new Color(1f, 1f, 1f, alpha);
         }
 
         /// <summary>Твин float-поля, не зависящий от timeScale.</summary>

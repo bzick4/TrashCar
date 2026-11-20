@@ -10,7 +10,6 @@ namespace JunkRace
     /// </summary>
     public class FollowCamera : MonoBehaviour
     {
-        void Awake() => useGUILayout = false;   // OnGUI без GUILayout — без лишнего прохода раскладки
 
         [SerializeField] PlayerController player;
 
@@ -39,7 +38,8 @@ namespace JunkRace
         Vector3 holdDefaultPos;
         Renderer[] bodyRenderers;
         bool bodyHidden;
-        GUIStyle crossStyle;
+        UiPainter crossPaint;   // прицел — через UGUI (IMGUI в Linear выбеливал)
+        static readonly UiPainter.Style CrossStyle = new UiPainter.Style(22, new Color(1f, 1f, 1f, 0.8f), TextAnchor.MiddleCenter, wrap: false);
 
         void Start()
         {
@@ -61,6 +61,7 @@ namespace JunkRace
 
         void LateUpdate()
         {
+            DrawCrosshair();
             if (player == null) return;
             // Модель человечка ставится позже камеры — раз в полсекунды пересобираем список своих рендеров.
             rescanTimer -= Time.deltaTime;
@@ -186,15 +187,15 @@ namespace JunkRace
             return false;
         }
 
-        void OnGUI()
+        void DrawCrosshair()
         {
-            if (!firstPerson || InGameMenu.IsOpen || player == null) return;
-            if (crossStyle == null)
-            {
-                crossStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 22 };
-                crossStyle.normal.textColor = new Color(1f, 1f, 1f, 0.8f);
-            }
-            GUI.Label(new Rect(Screen.width / 2f - 20f, Screen.height / 2f - 20f, 40f, 40f), "+", crossStyle);
+            crossPaint ??= new UiPainter("Прицел", 12);
+            crossPaint.Begin();
+            if (firstPerson && !InGameMenu.IsOpen && player != null)
+                crossPaint.Label(new Rect(Screen.width / 2f - 20f, Screen.height / 2f - 20f, 40f, 40f), "+", CrossStyle);
+            crossPaint.End();
         }
+
+        void OnDestroy() => crossPaint?.Destroy();
     }
 }

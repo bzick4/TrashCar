@@ -16,12 +16,12 @@ namespace JunkRace
     [DisallowMultipleComponent]
     public class StylizedAtmosphere : MonoBehaviour
     {
-        public enum Preset { ЗолотойЧас, Полдень, Пасмурно, Свой }
+        public enum Preset { ЗолотойЧас, Полдень, Пасмурно, Свой, Мультяшный }
 
         public static StylizedAtmosphere Instance { get; private set; }
 
         [Tooltip("Готовая палитра. Поменяй — цвета ниже перезапишутся.")]
-        [SerializeField] Preset preset = Preset.ЗолотойЧас;
+        [SerializeField] Preset preset = Preset.Мультяшный;
 
         [Header("Цвета")]
         [SerializeField] Color skyZenith = new Color(0.42f, 0.56f, 0.80f);
@@ -75,6 +75,7 @@ namespace JunkRace
         static readonly int SunDirId = Shader.PropertyToID("_JR_AtmoSunDir");
         static readonly int DistId = Shader.PropertyToID("_JR_AtmoDist");
         static readonly int HeightId = Shader.PropertyToID("_JR_AtmoHeight");
+        static readonly int NightId = Shader.PropertyToID("_JR_AtmoNight");
 
         // Какой пресет уже записан в цвета. Сохраняется со сценой, иначе после перекомпиляции
         // пресет применился бы заново и стёр ручные правки.
@@ -124,6 +125,66 @@ namespace JunkRace
             if (toSun != pushedSun) PushGlobals();
         }
 
+        // ================= Время суток =================
+
+        /// <summary>Палитра неба и дымки (как у пресета).</summary>
+        public struct Palette
+        {
+            public Color Zenith, Horizon, Near, Glow;
+            public float GlowStrength;
+
+            public static Palette Lerp(Palette a, Palette b, float t) => new Palette
+            {
+                Zenith = Color.Lerp(a.Zenith, b.Zenith, t),
+                Horizon = Color.Lerp(a.Horizon, b.Horizon, t),
+                Near = Color.Lerp(a.Near, b.Near, t),
+                Glow = Color.Lerp(a.Glow, b.Glow, t),
+                GlowStrength = Mathf.Lerp(a.GlowStrength, b.GlowStrength, t),
+            };
+        }
+
+        public Palette BasePalette => new Palette { Zenith = skyZenith, Horizon = horizon, Near = nearHaze, Glow = sunGlow, GlowStrength = sunGlowStrength };
+
+        Palette? timeOfDay;
+        float night;
+
+        /// <summary>
+        /// Смена дня и ночи: палитра неба и дымки на этот момент, night 0..1 — звёзды.
+        /// Окружающий свет — из той же палитры. Зовётся каждый кадр.
+        /// </summary>
+        public void SetTimeOfDay(Palette p, float nightAmount)
+        {
+            timeOfDay = p;
+            night = Mathf.Clamp01(nightAmount);
+            if (driveAmbient)
+            {
+                RenderSettings.ambientMode = AmbientMode.Trilight;
+                RenderSettings.ambientSkyColor = Color.Lerp(p.Zenith, Color.white, 0.15f * (1f - night * 0.7f));
+                RenderSettings.ambientEquatorColor = Color.Lerp(p.Horizon, p.Near, 0.5f);
+                RenderSettings.ambientGroundColor = p.Near * 0.5f;
+            }
+            PushGlobals();
+        }
+
+        static float Lum(Color c) => c.r * 0.3f + c.g * 0.59f + c.b * 0.11f;
+
+        // ================= Погода =================
+
+        Color weatherColor = Color.white;
+        float weatherBlend, weatherDistance = 1f;
+
+        /// <summary>
+        /// Дымка от погоды: blend — насколько перекрасить в color (0 — ясно), distanceScale — во сколько раз
+        /// сократить «полудистанцию» дымки (меньше — гуще). Зовётся при плавной смене погоды.
+        /// </summary>
+        public void SetWeather(Color color, float blend, float distanceScale)
+        {
+            weatherColor = color;
+            weatherBlend = Mathf.Clamp01(blend);
+            weatherDistance = Mathf.Clamp(distanceScale, 0.05f, 1f);
+            PushGlobals();
+        }
+
         // ================= Применение =================
 
         /// <summary>Глобальные параметры для шейдеров — каждый кадр (солнце могло повернуться).</summary>
@@ -135,12 +196,21 @@ namespace JunkRace
             pushedSun = toSun;
 
             // SetGlobalColor сам переводит цвет в линейное пространство, если проект в Linear.
-            Shader.SetGlobalColor(NearId, nearHaze);
-            Shader.SetGlobalColor(FarId, horizon);
-            Shader.SetGlobalColor(ZenithId, skyZenith);
-            Shader.SetGlobalColor(SunId, new Color(sunGlow.r, sunGlow.g, sunGlow.b, sunGlowStrength));
+            // Время суток (DayNightCycle) подменяет палитру; погода (Weather) сверху подмешивает свой цвет
+            // и сгущает дымку. Настройки компонента не трогаются.
+            var pal = timeOfDay ?? BasePalette;
+            float w = weatherBlend;
+            // Цвет непогоды — в яркости текущего неба: ночью метель тёмная, а не светящаяся.
+            float bright = Mathf.Clamp(Lum(pal.Horizon) / 0.9f, 0.1f, 1f);
+            var wc = weatherColor * bright; wc.a = 1f;
+            Shader.SetGlobalColor(NearId, Color.Lerp(pal.Near, wc, w));
+            Shader.SetGlobalColor(FarId, Color.Lerp(pal.Horizon, wc, w));
+            Shader.SetGlobalColor(ZenithId, Color.Lerp(pal.Zenith, wc, w * 0.7f));
+            Shader.SetGlobalColor(SunId, new Color(pal.Glow.r, pal.Glow.g, pal.Glow.b, pal.GlowStrength * (1f - w)));
+            Shader.SetGlobalVector(NightId, new Vector4(night * (1f - w), 0f, 0f, 0f));
             Shader.SetGlobalVector(SunDirId, new Vector4(toSun.x, toSun.y, toSun.z, 1f));
-            Shader.SetGlobalVector(DistId, new Vector4(startDistance, Mathf.Max(1f, halfDistance), maxOpacity, 0f));
+            Shader.SetGlobalVector(DistId, new Vector4(startDistance * Mathf.Lerp(1f, 0.2f, w), Mathf.Max(1f, halfDistance * weatherDistance),
+                                                       Mathf.Lerp(maxOpacity, 1f, w), 0f));
             Shader.SetGlobalVector(HeightId, new Vector4(baseHeight, Mathf.Max(0f, heightFalloff), heightStrength, 0f));
         }
 
@@ -228,6 +298,19 @@ namespace JunkRace
                     sunIntensity = 1.6f;
                     halfDistance = 420f;
                     maxOpacity = 0.92f;
+                    break;
+                case Preset.Мультяшный:   // сочный ясный день: голубое небо, прозрачная даль, чуть тёплое солнце
+                    skyZenith = new Color(0.30f, 0.55f, 0.92f);
+                    horizon = new Color(0.84f, 0.90f, 0.97f);
+                    nearHaze = new Color(0.76f, 0.84f, 0.92f);
+                    sunGlow = new Color(1f, 0.88f, 0.66f);
+                    sunGlowStrength = 0.35f;
+                    sunColor = new Color(1f, 0.95f, 0.86f);
+                    sunIntensity = 1.6f;
+                    halfDistance = 560f;
+                    maxOpacity = 0.9f;
+                    startDistance = 45f;
+                    heightStrength = 0.5f;
                     break;
                 case Preset.Пасмурно:     // серо-зелёный, плотная дымка
                     skyZenith = new Color(0.60f, 0.65f, 0.70f);

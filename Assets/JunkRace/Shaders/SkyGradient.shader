@@ -64,6 +64,16 @@ Shader "JunkRace/Sky Gradient"
                 half disc = smoothstep(sunCos - 0.0006, sunCos + 0.0006, s);
                 color = lerp(color, _JR_AtmoSun.rgb * 1.6 + 0.4, disc * step(-0.02, dir.y));
 
+                // Ночью — звёзды: редкие точки по сетке направлений, у горизонта гаснут.
+                if (_JR_AtmoNight.x > 0.001)
+                {
+                    float3 cell = floor(dir * 260.0);
+                    float h = frac(sin(dot(cell, float3(12.9898, 78.233, 37.719))) * 43758.5453);
+                    float star = step(0.9968, h) * smoothstep(0.04, 0.3, dir.y);
+                    float tw = 0.65 + 0.35 * sin(_Time.y * (1.5 + h * 3.0) + h * 40.0);   // мерцание
+                    color += star * tw * _JR_AtmoNight.x * half3(0.95, 0.97, 1.0);
+                }
+
                 // Ниже горизонта — ровная дымка (за краем мира ничего не видно).
                 if (dir.y < _HorizonLift) color = lerp(horizon, _JR_AtmoNear.rgb, saturate((_HorizonLift - dir.y) * 3.0));
 

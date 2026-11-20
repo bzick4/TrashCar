@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace JunkRace
 {
-    public enum Biome { Forest, Mountains }
+    public enum Biome { Forest, Mountains, Snow }
 
     /// <summary>Точка осевой линии дороги.</summary>
     public struct RouteSample

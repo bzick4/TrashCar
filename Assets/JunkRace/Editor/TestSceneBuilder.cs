@@ -241,6 +241,8 @@ namespace JunkRace.EditorTools
             // Деревья: высота 1, низ на нуле (пропорции свои). Камни и бревно: вписаны в единичный куб.
             SetObjects(gen, "treeModels", RouteTemplates(box, "Tree", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true));
             SetObjects(gen, "pineModels", RouteTemplates(box, "Pine", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true));
+            // Ёлки в снегу: те же модели, текстура хвои заменена на *_snow.png рядом с исходной.
+            SetObjects(gen, "snowPineModels", SnowVariants(RouteTemplates(box, "Pine", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true)));
             SetObjects(gen, "rockModels", RouteTemplates(box, "Rock", Vector3.zero, Vector3.one, false));
             // Горы на горизонте (со снежными шапками): вписаны в единичный куб, как и сферы-заглушки.
             SetObjects(gen, "mountainModels", RouteTemplates(box, "Mountain", Vector3.zero, Vector3.one, false));
@@ -292,7 +294,96 @@ namespace JunkRace.EditorTools
             Use("roadMountain", "mountain_road");
             Use("sideMountain", "mountain_side");
             Use("groundGrass", "grass");
+            Use("roadSnow", "snow_road");
+            Use("sideSnow", "snow_side");
+            Use("groundSnow", "snow_ground");
+
+            Use("groundMountain", "mountain_ground");
+            // Переходы: transition_road_<верх>_<низ>.png и transition_ground_<верх>_<низ>.png.
+            // Биомы, которых в игре ещё нет (пустыня), пропускаем.
+            Transitions(so, "roadTransitions", "transition_road_", TextureWrapMode.Clamp);
+            Transitions(so, "groundTransitions", "transition_ground_", TextureWrapMode.Repeat);   // поперёк карты повторяется
             so.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        /// <summary>Картинки-переходы между биомами → массив (From, To, Material) у генератора.</summary>
+        static void Transitions(SerializedObject so, string field, string prefix, TextureWrapMode wrapU)
+        {
+            var trans = so.FindProperty(field);
+            trans.arraySize = 0;
+            foreach (var guid in AssetDatabase.FindAssets(prefix + " t:Texture2D", new[] { RouteModelsFolder + "/Textures" }))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                string file = System.IO.Path.GetFileNameWithoutExtension(path);
+                if (!file.StartsWith(prefix)) continue;
+                var parts = file.Substring(prefix.Length).Split('_');
+                if (parts.Length != 2 || !TryBiome(parts[0], out var from) || !TryBiome(parts[1], out var to)) continue;
+                if (AssetImporter.GetAtPath(path) is TextureImporter ti && (ti.wrapModeU != wrapU || ti.wrapModeV != TextureWrapMode.Clamp || ti.anisoLevel < 4))
+                {
+                    // По длине картинка кладётся один раз: края не подмешивают противоположный биом.
+                    ti.wrapModeU = wrapU;
+                    ti.wrapModeV = TextureWrapMode.Clamp;
+                    ti.maxTextureSize = 1024;
+                    ti.anisoLevel = 4;
+                    ti.SaveAndReimport();
+                }
+                var src = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = System.IO.Path.GetFileNameWithoutExtension(path) };
+                src.SetTexture("_BaseMap", AssetDatabase.LoadAssetAtPath<Texture2D>(path));
+                var m = LookBuilder.ConvertMaterial(src);
+                m.enableInstancing = true;
+                int i = trans.arraySize++;
+                var e = trans.GetArrayElementAtIndex(i);
+                e.FindPropertyRelative("From").enumValueIndex = (int)from;
+                e.FindPropertyRelative("To").enumValueIndex = (int)to;
+                e.FindPropertyRelative("Material").objectReferenceValue = m;
+            }
+        }
+
+        /// <summary>
+        /// Снежные копии образцов: у каждого материала с текстурой X.png, рядом с которой лежит X_snow.png,
+        /// текстура заменяется на снежную. Образцы без снежных текстур остаются как есть.
+        /// </summary>
+        static List<GameObject> SnowVariants(List<GameObject> templates)
+        {
+            var swapped = new Dictionary<Material, Material>();
+            foreach (var t in templates)
+            {
+                t.name += "_snow";
+                foreach (var r in t.GetComponentsInChildren<Renderer>(true))
+                {
+                    var mats = r.sharedMaterials;
+                    for (int i = 0; i < mats.Length; i++)
+                    {
+                        var m = mats[i];
+                        if (m == null || !m.HasProperty("_BaseMap")) continue;
+                        if (!swapped.TryGetValue(m, out var snow))
+                        {
+                            snow = m;
+                            string path = AssetDatabase.GetAssetPath(m.GetTexture("_BaseMap"));
+                            if (!string.IsNullOrEmpty(path))
+                            {
+                                var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(System.IO.Path.ChangeExtension(path, null) + "_snow.png");
+                                if (tex != null)
+                                {
+                                    snow = new Material(m) { name = m.name + " snow" };
+                                    snow.SetTexture("_BaseMap", tex);
+                                }
+                            }
+                            swapped[m] = snow;
+                        }
+                        mats[i] = snow;
+                    }
+                    r.sharedMaterials = mats;
+                }
+            }
+            return templates;
+        }
+
+        /// <summary>Имя биома в файле: forest, mountains (mountain), snow.</summary>
+        static bool TryBiome(string name, out Biome biome)
+        {
+            if (name == "mountain") name = "mountains";
+            return System.Enum.TryParse(name, true, out biome) && System.Enum.IsDefined(typeof(Biome), biome);
         }
 
         static List<GameObject> FenceTemplates(Transform box, params string[] files)

@@ -121,7 +121,6 @@ namespace JunkRace
 
         void Awake()
         {
-            useGUILayout = false;   // OnGUI рисует без GUILayout — служебный проход раскладки не нужен
             Instance = this;
             loadingStart = Time.time;
         }
@@ -156,6 +155,8 @@ namespace JunkRace
         {
             if (Instance == this) Instance = null;
             DOTween.Kill(WarnTween);
+            paint?.Destroy();
+            loadingPaint?.Destroy();
         }
 
         // ============================ Хост ============================
@@ -377,23 +378,40 @@ namespace JunkRace
         }
 
         // ============================ Экран ============================
+        // HUD рисуется через UiPainter (UGUI, каждый кадр): IMGUI в Linear выбеливал цвета.
 
-        GUIStyle style, big, center, row, rowCenter, rowBold;
         bool cursorFreed;
         float placesTimer;
         readonly List<Racer> shownPlaces = new List<Racer>();
+        UiPainter paint, loadingPaint;
 
-        void OnGUI()
+        static readonly Color LabelColor = new Color(0.92f, 0.92f, 0.92f);
+        static readonly UiPainter.Style StyleText = new UiPainter.Style(28, LabelColor, bold: true);
+        static readonly UiPainter.Style StyleCenter = StyleText.With(TextAnchor.MiddleCenter);
+        static readonly UiPainter.Style StyleBig = new UiPainter.Style(120, LabelColor, TextAnchor.MiddleCenter, true, false);
+        static readonly UiPainter.Style StyleRow = new UiPainter.Style(22, LabelColor);
+        static readonly UiPainter.Style StyleRowCenter = StyleRow.With(TextAnchor.MiddleCenter);
+        static readonly UiPainter.Style StyleRowBold = StyleRow.WithBold(true);
+        static readonly UiPainter.Style StyleWarnCenter = StyleRowCenter.With(new Color(1f, 0.55f, 0.35f));
+        static readonly Color HudLight = new Color(0.96f, 0.92f, 0.84f);
+        static readonly UiPainter.Style StyleHudWarn = new UiPainter.Style(16, new Color(1f, 0.97f, 0.9f), TextAnchor.MiddleCenter, true, false);
+        static readonly UiPainter.Style StyleSign = new UiPainter.Style(24, new Color(1f, 0.75f, 0.3f), TextAnchor.MiddleCenter, true, false);
+        static readonly UiPainter.Style StyleLeft = new UiPainter.Style(18, HudLight, TextAnchor.MiddleLeft, false, false);
+
+        void LateUpdate()
         {
-            if (InGameMenu.IsOpen) return;
-            style ??= new GUIStyle(GUI.skin.label) { fontSize = 28, fontStyle = FontStyle.Bold };
-            center ??= new GUIStyle(style) { alignment = TextAnchor.MiddleCenter };
-            big ??= new GUIStyle(style) { fontSize = 120, alignment = TextAnchor.MiddleCenter };
-            row ??= new GUIStyle(GUI.skin.label) { fontSize = 22 };
-            rowCenter ??= new GUIStyle(row) { alignment = TextAnchor.MiddleCenter };
-            rowBold ??= new GUIStyle(row) { fontStyle = FontStyle.Bold };
-            float w = Screen.width, h = Screen.height;
+            paint ??= new UiPainter("Гонка", 10);
+            loadingPaint ??= new UiPainter("Загрузка", 100);   // поверх всего HUD
+            paint.Begin();
+            loadingPaint.Begin();
+            if (!InGameMenu.IsOpen) DrawHud();
+            paint.End();
+            loadingPaint.End();
+        }
 
+        void DrawHud()
+        {
+            float w = Screen.width, h = Screen.height;
             switch (Phase)
             {
                 case MatchPhase.Loading:
@@ -407,12 +425,12 @@ namespace JunkRace
                     DrawBuild(w);
                     break;
                 case MatchPhase.Countdown:
-                    if (!DrawCountdown(w, h)) GUI.Label(new Rect(0, h * 0.3f, w, 160), Mathf.CeilToInt(Remaining).ToString(), big);
+                    if (!DrawCountdown(w, h)) paint.Label(new Rect(0, h * 0.3f, w, 160), Mathf.CeilToInt(Remaining).ToString(), StyleBig);
                     break;
                 case MatchPhase.Race:
                 {
                     float t = Elapsed;
-                    if (t < 1.2f) GUI.Label(new Rect(0, h * 0.3f, w, 160), "ВПЕРЁД!", big);
+                    if (t < 1.2f) paint.Label(new Rect(0, h * 0.3f, w, 160), "ВПЕРЁД!", StyleBig);
                     placesTop = DrawRaceClock(t);
                     DrawPlaces();
                     break;
@@ -435,8 +453,8 @@ namespace JunkRace
                 int expected = ExpectedPlayers(out int ready, readyClients);
                 who = $" ({ready}/{expected})";
             }
-            GUI.Label(new Rect(0, 16, w, 40), "Ждём остальных игроков" + who, center);
-            GUI.Label(new Rect(0, 52, w, 30), "Можно осмотреться. Брать детали — когда загрузятся все и пойдёт таймер", rowCenter);
+            paint.Label(new Rect(0, 16, w, 40), "Ждём остальных игроков" + who, StyleCenter);
+            paint.Label(new Rect(0, 52, w, 30), "Можно осмотреться. Брать детали — когда загрузятся все и пойдёт таймер", StyleRowCenter);
         }
 
         // ============================ Верх экрана: табличка, лента, предупреждение ============================
@@ -444,13 +462,16 @@ namespace JunkRace
         static Texture2D[] digitTex;
         static Texture2D digitColon, timerSign, hintBanner, warnPlate, racePlate, iconBuilding, iconReady;
         static bool hudLoaded;
-        GUIStyle bannerStyle, warnStyle, hudLight, hudWarn, signText;
         float placesTop = 60f;
 
         // Окна под текст внутри картинок (доли картинки).
         static readonly Rect SignInner = new Rect(0.07f, 0.45f, 0.86f, 0.44f);
         static readonly Rect BannerInner = new Rect(0.17f, 0.22f, 0.66f, 0.57f);
         static readonly Rect RaceInner = new Rect(0.31f, 0.35f, 0.62f, 0.49f);
+        // RectOffset нельзя создавать при инициализации MonoBehaviour — только при первом использовании.
+        static RectOffset warnBorder, placesBorder;
+        static RectOffset WarnBorder => warnBorder ??= new RectOffset(170, 170, 0, 0);
+        static RectOffset PlacesBorder => placesBorder ??= new RectOffset(70, 70, 70, 70);
 
         bool LoadHud()
         {
@@ -468,21 +489,7 @@ namespace JunkRace
                 iconReady = Resources.Load<Texture2D>("UI/hud/icon_status_ready");
                 placesPanel = Resources.Load<Texture2D>("UI/hud/card_panel");
             }
-            // Картинки — статические (грузятся раз на запуск), а стили — у каждого RaceTimer свои:
-            // при новой сцене RaceTimer новый, и стили надо создать заново, иначе GUI.Box получит null.
-            if (bannerStyle == null && hintBanner != null) bannerStyle = new GUIStyle { border = new RectOffset(300, 300, 0, 0), normal = { background = hintBanner } };
-            if (warnStyle == null && warnPlate != null) warnStyle = new GUIStyle { border = new RectOffset(170, 170, 0, 0), normal = { background = warnPlate } };
-            if (placesStyle == null && placesPanel != null) placesStyle = new GUIStyle { border = new RectOffset(70, 70, 70, 70), normal = { background = placesPanel } };
-            if (hudLight == null)
-            {
-                hudLight = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, richText = true };
-                hudLight.normal.textColor = new Color(0.96f, 0.92f, 0.84f);
-                hudWarn = new GUIStyle(hudLight) { fontStyle = FontStyle.Bold };
-                hudWarn.normal.textColor = new Color(1f, 0.97f, 0.9f);
-                signText = new GUIStyle(hudLight) { fontStyle = FontStyle.Bold };
-                signText.normal.textColor = new Color(1f, 0.75f, 0.3f);
-            }
-            bool ok = timerSign != null && hintBanner != null && warnPlate != null && digitColon != null && warnStyle != null;
+            bool ok = timerSign != null && hintBanner != null && warnPlate != null && digitColon != null;
             if (ok) foreach (var d in digitTex) if (d == null) { ok = false; break; }
             return ok;
         }
@@ -501,7 +508,7 @@ namespace JunkRace
         }
 
         /// <summary>Цифры из картинок (0–9 и двоеточие) по центру области.</summary>
-        static void DrawDigits(string text, Rect area, float height)
+        void DrawDigits(string text, Rect area, float height)
         {
             float x = area.center.x - DigitsWidth(text, height) / 2f, y = area.center.y - height / 2f;
             foreach (char c in text)
@@ -510,19 +517,9 @@ namespace JunkRace
                 if (t == null) continue;
                 float cw = height * t.width / t.height;
                 float ch = c == ':' ? height * 0.8f : height;
-                GUI.DrawTexture(new Rect(x, y + (height - ch) / 2f, cw, ch), t);
+                paint.Tex(new Rect(x, y + (height - ch) / 2f, cw, ch), t);
                 x += cw * 0.92f;   // буквы чуть внахлёст — как приклёпанные
             }
-        }
-
-        /// <summary>Растягиваемая по ширине картинка (края не тянутся): высота задаётся, ширина — любая.</summary>
-        static void Stretch(Rect r, GUIStyle style, Texture2D tex)
-        {
-            float s = r.height / tex.height;
-            var m = GUI.matrix;
-            GUI.matrix = m * Matrix4x4.TRS(new Vector3(r.x, r.y, 0f), Quaternion.identity, new Vector3(s, s, 1f));
-            GUI.Box(new Rect(0f, 0f, r.width / s, tex.height), GUIContent.none, style);
-            GUI.matrix = m;
         }
 
         void DrawBuild(float w)
@@ -537,9 +534,9 @@ namespace JunkRace
 
             if (!LoadHud())
             {
-                GUI.Label(new Rect(0, 16, w, 40), dev ? "Тест-комната: без таймера" : $"Сборка: {(int)(t / 60)}:{(int)(t % 60):00}", center);
-                GUI.Label(new Rect(0, 52, w, 30), hint, rowCenter);
-                if (problem != null) GUI.Label(new Rect(0, 116, w, 30), problem, warnCenter ??= MakeWarn());
+                paint.Label(new Rect(0, 16, w, 40), dev ? "Тест-комната: без таймера" : $"Сборка: {(int)(t / 60)}:{(int)(t % 60):00}", StyleCenter);
+                paint.Label(new Rect(0, 52, w, 30), hint, StyleRowCenter);
+                if (problem != null) paint.Label(new Rect(0, 116, w, 30), problem, StyleWarnCenter);
                 return;
             }
 
@@ -547,13 +544,9 @@ namespace JunkRace
             // Табличка на цепях: время сборки (подсказка и список игроков — в окне Tab).
             float sw = 240f * k, sh = sw * timerSign.height / timerSign.width;
             var sign = new Rect((w - sw) / 2f, -14f * k, sw, sh);
-            GUI.DrawTexture(sign, timerSign);
+            paint.Tex(sign, timerSign);
             var signIn = Inner(sign, SignInner);
-            if (dev)
-            {
-                signText.fontSize = Mathf.RoundToInt(24f * k);
-                GUI.Label(signIn, "ТЕСТ", signText);
-            }
+            if (dev) paint.Label(signIn, "ТЕСТ", StyleSign.With(Mathf.RoundToInt(24f * k)));
             else DrawDigits($"{(int)(t / 60)}:{(int)(t % 60):00}", signIn, signIn.height * 0.86f);
 
             // Маленькая плашка под таймером — только пока машины ещё нет (меньше двух деталей).
@@ -570,19 +563,14 @@ namespace JunkRace
             }
             if (warnShow > 0.01f && warnMsg != null)
             {
-                hudWarn.fontSize = Mathf.RoundToInt(16f * k);
-                float ph = 44f * k, pw = hudWarn.CalcSize(new GUIContent(warnMsg)).x + 2f * 175f * (ph / warnPlate.height) + 20f * k;
+                var st = StyleHudWarn.With(Mathf.RoundToInt(16f * k));
+                float ph = 44f * k, pw = paint.Measure(warnMsg, st).x + 2f * 175f * (ph / warnPlate.height) + 20f * k;
                 var plate = new Rect((w - pw) / 2f, sign.yMax - 2f * k, pw, ph);
                 // Масштаб от центра плашки + прозрачность.
                 float sc = Mathf.Max(0.01f, warnShow);
-                var m = GUI.matrix;
-                var col = GUI.color;
-                GUIUtility.ScaleAroundPivot(new Vector2(sc, sc), plate.center);
-                GUI.color = new Color(1f, 1f, 1f, Mathf.Clamp01(warnShow));
-                Stretch(plate, warnStyle, warnPlate);
-                GUI.Label(plate, warnMsg, hudWarn);
-                GUI.color = col;
-                GUI.matrix = m;
+                var tint = new Color(1f, 1f, 1f, Mathf.Clamp01(warnShow));
+                paint.Sliced(plate, warnPlate, WarnBorder, ph / warnPlate.height, tint, sc);
+                paint.Label(plate, warnMsg, st.With(st.Color * tint), sc);
             }
         }
 
@@ -619,24 +607,16 @@ namespace JunkRace
         {
             if (!LoadHud() || racePlate == null)
             {
-                GUI.Label(new Rect(20, 20, 300, 40), FormatTime(t), style);
+                paint.Label(new Rect(20, 20, 300, 40), FormatTime(t), StyleText);
                 return 60f;
             }
             float k = Screen.height / 1080f;
             float pw = 330f * k, ph = pw * racePlate.height / racePlate.width;
             var plate = new Rect(16f * k, 12f * k, pw, ph);
-            GUI.DrawTexture(plate, racePlate);
+            paint.Tex(plate, racePlate);
             var inner = Inner(plate, RaceInner);
             DrawDigits($"{(int)(t / 60)}:{(int)(t % 60):00}", inner, inner.height * 0.9f);
             return plate.yMax + 4f * k;
-        }
-
-        GUIStyle warnCenter;
-        GUIStyle MakeWarn()
-        {
-            var st = new GUIStyle(rowCenter);
-            st.normal.textColor = new Color(1f, 0.55f, 0.35f);
-            return st;
         }
 
         /// <summary>Чего не хватает своей машине (null — всё есть).</summary>
@@ -659,15 +639,12 @@ namespace JunkRace
         static bool loadingArtLoaded;
         Texture2D loadingArt;
         float loadingArtFor = -1f;
-        GUIStyle plateStyle;
 
         // Окно под заливку внутри рамки (доли картинки loading_frame.png).
         static readonly Rect BarSlot = new Rect(0.083f, 0.36f, 0.835f, 0.43f);
 
         void DrawLoading(string title)
         {
-            // Поверх всего: пока не загрузились все, ничего не видно и не двигается.
-            GUI.depth = -100;
             if (loadingTex == null)
             {
                 loadingTex = new Texture2D(1, 1);
@@ -689,9 +666,11 @@ namespace JunkRace
                 loadingArt = loadingArts != null && loadingArts.Length > 0 ? loadingArts[UnityEngine.Random.Range(0, loadingArts.Length)] : null;
             }
 
+            var p = loadingPaint;
             float w = Screen.width, h = Screen.height;
-            GUI.DrawTexture(new Rect(0, 0, w, h), loadingTex);
-            if (loadingArt != null) GUI.DrawTexture(new Rect(0, 0, w, h), loadingArt, ScaleMode.ScaleAndCrop);
+            var full = new Rect(0, 0, w, h);
+            p.Tex(full, loadingTex);
+            if (loadingArt != null) p.Tex(full, loadingArt, UiDraw.CropUv(full, loadingArt));
 
             // Прогресс: настоящего процента нет — плавно ползёт к 90%, в сети подтягивается по готовым игрокам.
             float t = Time.time - loadingStart;
@@ -714,34 +693,32 @@ namespace JunkRace
                 var frame = new Rect(w - bw - 40f * k, h - bh - 40f * k, bw, bh);
                 var slot = new Rect(frame.x + frame.width * BarSlot.x, frame.y + frame.height * BarSlot.y,
                                     frame.width * BarSlot.width, frame.height * BarSlot.height);
-                GUI.DrawTexture(frame, barFrame);
+                p.Tex(frame, barFrame);
                 // Полосы не сжимаются: показываем левую часть картинки шириной progress.
-                float p = Mathf.Clamp01(progress);
-                if (p > 0.01f)
-                    GUI.DrawTextureWithTexCoords(new Rect(slot.x, slot.y, slot.width * p, slot.height), barFill, new Rect(0f, 0f, p, 1f));
+                float pr = Mathf.Clamp01(progress);
+                if (pr > 0.01f)
+                    p.Tex(new Rect(slot.x, slot.y, slot.width * pr, slot.height), barFill, new Rect(0f, 0f, pr, 1f));
 
                 // Табличка с надписью над правым краем полосы.
                 int dots = 1 + (int)(Time.unscaledTime * 2f) % 3;
-                plateStyle ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, wordWrap = true, richText = true };
-                plateStyle.fontSize = Mathf.RoundToInt(32f * k);
-                plateStyle.normal.textColor = new Color(0.27f, 0.17f, 0.1f);
+                var st = new UiPainter.Style(Mathf.RoundToInt(32f * k), new Color(0.27f, 0.17f, 0.1f), TextAnchor.MiddleCenter, true, true);
                 float pw = 300f * k, ph = barPlate != null ? pw * barPlate.height / barPlate.width : 90f * k;
                 var plate = new Rect(frame.xMax - pw - 30f * k, frame.y - ph + 6f * k, pw, ph);
-                if (barPlate != null) GUI.DrawTexture(plate, barPlate);
-                GUI.Label(new Rect(plate.x + 24f * k, plate.y, plate.width - 48f * k, plate.height),
-                          title + new string('.', dots) + (who != null ? "\n<size=" + Mathf.RoundToInt(20f * k) + ">" + who + "</size>" : ""), plateStyle);
+                if (barPlate != null) p.Tex(plate, barPlate);
+                p.Label(new Rect(plate.x + 24f * k, plate.y, plate.width - 48f * k, plate.height),
+                        title + new string('.', dots) + (who != null ? "\n<size=" + Mathf.RoundToInt(20f * k) + ">" + who + "</size>" : ""), st);
                 return;
             }
 
             // Нет картинок полоски — как раньше: надпись по центру.
             int d2 = 1 + (int)(Time.unscaledTime * 2f) % 3;
-            GUI.Label(new Rect(0, h * 0.42f, w, 50), title + new string('.', d2), center);
-            if (who != null) GUI.Label(new Rect(0, h * 0.42f + 56, w, 34), who, rowCenter);
+            p.Label(new Rect(0, h * 0.42f, w, 50), title + new string('.', d2), StyleCenter);
+            if (who != null) p.Label(new Rect(0, h * 0.42f + 56, w, 34), who, StyleRowCenter);
         }
 
         void DrawPlaces()
         {
-            // Места — 4 раза в секунду (поиск по маршруту не бесплатный), а OnGUI зовётся несколько раз за кадр.
+            // Места — 4 раза в секунду (поиск по маршруту не бесплатный).
             if (Time.unscaledTime >= placesTimer)
             {
                 placesTimer = Time.unscaledTime + 0.25f;
@@ -755,13 +732,13 @@ namespace JunkRace
 
             if (!LoadHud() || placesPanel == null)
             {
-                if (myPlace >= 0) GUI.Label(new Rect(20, top, 400, 40), $"Место {myPlace + 1}/{shownPlaces.Count}", style);
+                if (myPlace >= 0) paint.Label(new Rect(20, top, 400, 40), $"Место {myPlace + 1}/{shownPlaces.Count}", StyleText);
                 float y0 = top + 48f;
                 for (int i = 0; i < shownPlaces.Count; i++, y0 += 26f)
                 {
                     var r = shownPlaces[i];
                     string mark = r.Id == me ? "▶ " : "   ";
-                    GUI.Label(new Rect(20, y0, 500, 26), $"{mark}{i + 1}. {r.Name}{(r.Finished ? "  — " + FormatTime(r.Time) : "")}", row);
+                    paint.Label(new Rect(20, y0, 500, 26), $"{mark}{i + 1}. {r.Name}{(r.Finished ? "  — " + FormatTime(r.Time) : "")}", StyleRow);
                 }
                 return;
             }
@@ -774,32 +751,25 @@ namespace JunkRace
             float rowH = 34f * k, headH = 40f * k, gap = 8f * k;
             float ph = padTop + headH + gap + shownPlaces.Count * rowH + padBottom;
             var panel = new Rect(16f * k, top, pw, ph);
-            float s9 = 0.45f * k;
-            var m = GUI.matrix;
-            GUI.matrix = m * Matrix4x4.TRS(new Vector3(panel.x, panel.y, 0f), Quaternion.identity, new Vector3(s9, s9, 1f));
-            GUI.Box(new Rect(0f, 0f, panel.width / s9, panel.height / s9), GUIContent.none, placesStyle);
-            GUI.matrix = m;
+            paint.Sliced(panel, placesPanel, PlacesBorder, 0.45f * k);
 
             float x = panel.x + padX, y = panel.y + padTop, cw = pw - padX * 2f;
             float dh = rowH * 0.72f;   // высота нарисованной цифры — чуть выше строчной буквы
-            hudLight.fontSize = Mathf.RoundToInt(18f * k);
-            leftLabel ??= new GUIStyle(hudLight) { alignment = TextAnchor.MiddleLeft, richText = true };   // один раз: новый стиль в каждом OnGUI копит память
-            leftLabel.fontSize = hudLight.fontSize;
+            var left = StyleLeft.With(Mathf.RoundToInt(18f * k));
             if (myPlace >= 0)
             {
                 // «МЕСТО 2 из 4» в одну строку: слово, цифра, «из», цифра — одного размера.
-                leftLabel.fontStyle = FontStyle.Bold;
+                var bold = left.WithBold(true);
                 float wx = x;
-                var wWord = leftLabel.CalcSize(new GUIContent("МЕСТО")).x;
-                GUI.Label(new Rect(wx, y, wWord + 4f, headH), "МЕСТО", leftLabel);
+                float wWord = paint.Measure("МЕСТО", bold).x;
+                paint.Label(new Rect(wx, y, wWord + 4f, headH), "МЕСТО", bold);
                 wx += wWord + 10f * k;
                 string mine = (myPlace + 1).ToString();
                 float mw = DigitsWidth(mine, dh);
                 DrawDigits(mine, new Rect(wx, y, mw, headH), dh);
                 wx += mw + 10f * k;
-                leftLabel.fontStyle = FontStyle.Normal;
-                var wOf = leftLabel.CalcSize(new GUIContent("из")).x;
-                GUI.Label(new Rect(wx, y, wOf + 4f, headH), "из", leftLabel);
+                float wOf = paint.Measure("из", left).x;
+                paint.Label(new Rect(wx, y, wOf + 4f, headH), "из", left);
                 wx += wOf + 10f * k;
                 string all = shownPlaces.Count.ToString();
                 DrawDigits(all, new Rect(wx, y, DigitsWidth(all, dh), headH), dh);
@@ -813,12 +783,11 @@ namespace JunkRace
                 DrawDigits(pos, new Rect(x, y, DigitsWidth(pos, dh), rowH), dh);
                 string name = me2 ? "<color=#FFB347><b>" + r.Name + "</b></color>" : r.Name;
                 if (r.Finished) name += "  <color=#C8C2B8>" + FormatTime(r.Time) + "</color>";
-                GUI.Label(new Rect(x + 34f * k, y, cw - 34f * k, rowH), name, leftLabel);
+                paint.Label(new Rect(x + 34f * k, y, cw - 34f * k, rowH), name, left);
             }
         }
 
         static Texture2D placesPanel;
-        GUIStyle placesStyle, leftLabel;
 
         void DrawResults()
         {
@@ -833,26 +802,26 @@ namespace JunkRace
             var list = shownPlaces;
             float bw = 640f, bh = 170f + Mathf.Max(1, list.Count) * 34f;
             var box = new Rect((Screen.width - bw) / 2f, (Screen.height - bh) / 2f, bw, bh);
-            GUI.Box(box, "");
-            GUI.Label(new Rect(box.x, box.y + 12, bw, 40), "Итоги заезда", center);
+            paint.Box(box, new Color(0f, 0f, 0f, 0.7f));
+            paint.Label(new Rect(box.x, box.y + 12, bw, 40), "Итоги заезда", StyleCenter);
             float y = box.y + 64f;
-            if (list.Count == 0) GUI.Label(new Rect(box.x, y, bw, 30), "Никто не стартовал", rowCenter);
+            if (list.Count == 0) paint.Label(new Rect(box.x, y, bw, 30), "Никто не стартовал", StyleRowCenter);
             for (int i = 0; i < list.Count; i++, y += 34f)
             {
                 var r = list[i];
-                var st = r.Id == World.LocalId ? rowBold : row;
-                GUI.Label(new Rect(box.x + 30, y, 60, 30), $"{i + 1}.", st);
-                GUI.Label(new Rect(box.x + 80, y, 260, 30), r.Name, st);
-                GUI.Label(new Rect(box.x + 340, y, 130, 30), r.Finished ? FormatTime(r.Time) : "не доехал", st);
-                GUI.Label(new Rect(box.x + 480, y, 150, 30), r.Finished ? $"деталей: {r.Parts}" : "", st);
+                var st = r.Id == World.LocalId ? StyleRowBold : StyleRow;
+                paint.Label(new Rect(box.x + 30, y, 60, 30), $"{i + 1}.", st);
+                paint.Label(new Rect(box.x + 80, y, 260, 30), r.Name, st);
+                paint.Label(new Rect(box.x + 340, y, 130, 30), r.Finished ? FormatTime(r.Time) : "не доехал", st);
+                paint.Label(new Rect(box.x + 480, y, 150, 30), r.Finished ? $"деталей: {r.Parts}" : "", st);
             }
             if (GameSession.CanRestart)
             {
-                if (GUI.Button(new Rect(box.x + (bw - 300f) / 2f, box.y + bh - 90, 300f, 44f), "Ещё заезд (Enter)"))
+                if (paint.Button(new Rect(box.x + (bw - 320f) / 2f, box.y + bh - 100, 320f, 60f), "Ещё заезд (Enter)"))
                     GameSession.RestartTrack();
             }
-            else GUI.Label(new Rect(box.x, box.y + bh - 86, bw, 34), "Ждём, когда хост запустит ещё заезд…", rowCenter);
-            GUI.Label(new Rect(box.x, box.y + bh - 40, bw, 30), "Esc — меню", rowCenter);
+            else paint.Label(new Rect(box.x, box.y + bh - 86, bw, 34), "Ждём, когда хост запустит ещё заезд…", StyleRowCenter);
+            paint.Label(new Rect(box.x, box.y + bh - 40, bw, 30), "Esc — меню", StyleRowCenter);
         }
 
         static string FormatTime(float t) => t < 0f ? "--:--" : $"{(int)(t / 60):00}:{t % 60:00.0}";

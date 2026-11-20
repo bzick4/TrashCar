@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 namespace JunkRace
 {
@@ -16,6 +17,7 @@ namespace JunkRace
 
         void OnDestroy()
         {
+            hud?.Destroy();
             IsOpen = false;
             Time.timeScale = 1f;
         }
@@ -37,76 +39,97 @@ namespace JunkRace
             if (GameSession.Mode == GameMode.Solo) Time.timeScale = open ? 0f : 1f;
         }
 
-        // Стили — один раз: новый GUIStyle в каждом OnGUI копит нативную память и тормозит со временем.
-        static GUIStyle hudStyle;
+        // ======================= UGUI =======================
+
+        RectTransform canvas, panelContent;
         bool soundPage;
+        bool builtOpen, builtSound;
+        UiPainter hud;
+        Ui.UiButton scaleButton, fpsButton;
 
-        void OnGUI()
+        void LateUpdate()
         {
+            // Подпись в коопе: справа вверху, всегда.
+            hud ??= new UiPainter("Кооп", 5);
+            hud.Begin();
             if (GameSession.Mode == GameMode.Coop && CoopSession.Instance != null)
-            {
-                hudStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 20, alignment = TextAnchor.UpperRight };
-                var hud = hudStyle;
-                GUI.Label(new Rect(Screen.width - 620, 20, 600, 30),
-                    $"КООП · {CoopSession.Instance.ServerName} · игроков: {CoopSession.Instance.Players.Count}", hud);
-            }
+                hud.Label(new Rect(Screen.width - 620, 20, 600, 30),
+                    $"КООП · {CoopSession.Instance.ServerName} · игроков: {CoopSession.Instance.Players.Count}",
+                    new UiPainter.Style(20, Color.white, TextAnchor.UpperRight, wrap: false));
+            hud.End();
 
+            if (IsOpen != builtOpen || (IsOpen && soundPage != builtSound)) Rebuild();
+            if (IsOpen && !soundPage)
+            {
+                int q = QualitySetup.ScaleIndex;
+                string scaleText = q == 0 ? $"Авто ({Mathf.RoundToInt(QualitySetup.EffectiveScale * 100f)}%)" : QualitySetup.ScaleNames[q];
+                if (scaleButton != null) scaleButton.Text.text = $"Чёткость: {scaleText}";
+                if (fpsButton != null) fpsButton.Text.text = $"Лимит кадров: {QualitySetup.FpsNames[QualitySetup.FpsIndex]}";
+            }
+        }
+
+        void Rebuild()
+        {
+            builtOpen = IsOpen;
+            builtSound = soundPage;
+            if (canvas == null)
+            {
+                canvas = Ui.Canvas("Меню_паузы", 20, transform);
+                // Затемнение мира под панелью.
+                Ui.Stretch(Ui.Image("Затемнение", canvas, null, new Color(0.12f, 0.11f, 0.10f, 0.6f)).rectTransform).GetComponent<Graphic>().raycastTarget = true;
+                var panel = Ui.Node("Панель", canvas);
+                panel.anchorMin = panel.anchorMax = new Vector2(0.5f, 1f);
+                panel.pivot = new Vector2(0.5f, 1f);
+                panel.anchoredPosition = new Vector2(0f, -110f);
+                panel.sizeDelta = new Vector2(620f, 880f);
+                var art = Ui.Load("panel");
+                Ui.Plate(panel, art, new RectOffset(140, 140, 140, 140), new Color(0.20f, 0.18f, 0.16f, 0.97f));
+                float inset = art != null ? 74f : 40f;
+                panelContent = Ui.Stretch(Ui.Node("Содержимое", panel), inset, inset, inset, inset);
+            }
+            canvas.gameObject.SetActive(IsOpen);
             if (!IsOpen) return;
 
-            MenuStyles.Ensure();
-            float scale = Screen.height / 1080f;
-            GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
-            float w = Screen.width / scale;
-
-            GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            GUI.DrawTexture(new Rect(0, 0, w, 1080), MenuStyles.BackgroundTex);
-            GUI.color = Color.white;
-
-            var panel = new Rect((w - 620f) / 2f, 110f, 620f, 880f);   // +кнопка «Звук»
-            GUI.Box(panel, GUIContent.none, MenuStyles.Panel);
-            float inset = MenuStyles.HasArt ? 74f : 40f;
-            GUILayout.BeginArea(new Rect(panel.x + inset, panel.y + inset, panel.width - inset * 2f, panel.height - inset * 2f));
+            Ui.Clear(panelContent);
+            scaleButton = fpsButton = null;
+            var content = Ui.Stretch(Ui.Node(soundPage ? "Звук" : "Меню", panelContent));
+            Ui.Column(content, 0f).childForceExpandWidth = true;
 
             if (soundPage)
             {
-                GUILayout.Label("Звук", MenuStyles.Header);
-                GUILayout.Space(16);
-                GameAudio.DrawSliders(MenuStyles.Text, panel.width - inset * 2f);
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Назад", MenuStyles.Button)) { GameAudio.Save(); soundPage = false; }
-                GUILayout.EndArea();
-                GUI.matrix = Matrix4x4.identity;
+                Ui.Header(content, "Звук");
+                Ui.Space(content, 16f);
+                Ui.VolumeSliders(content, 472f);
+                Ui.Space(content, 0f, true);
+                Ui.Button(content, "Назад", "back", Ui.Big, () => { GameAudio.Save(); soundPage = false; });
                 return;
             }
 
-            GUILayout.Label(GameSession.Mode == GameMode.Solo ? "Пауза" : "Меню", MenuStyles.Header);
-            if (GameSession.Mode != GameMode.Solo) GUILayout.Label("Игра идёт, остальные играют дальше", MenuStyles.Hint);
-            GUILayout.Space(20);
-            if (GUILayout.Button("Продолжить", MenuStyles.Button)) SetOpen(false);
-            GUILayout.Space(12);
-            if (GameSession.CanRestart && GUILayout.Button(GameSession.Mode == GameMode.Solo ? "Заново" : "Заново (у всех)", MenuStyles.Button))
-                GameSession.RestartTrack();
-            GUILayout.Space(12);
+            Ui.Header(content, GameSession.Mode == GameMode.Solo ? "Пауза" : "Меню");
+            if (GameSession.Mode != GameMode.Solo) Ui.Hint(content, "Игра идёт, остальные играют дальше");
+            Ui.Space(content, 20f);
+            Ui.Button(content, "Продолжить", null, Ui.Big, () => SetOpen(false));
+            Ui.Space(content, 12f);
+            if (GameSession.CanRestart)
+            {
+                Ui.Button(content, GameSession.Mode == GameMode.Solo ? "Заново" : "Заново (у всех)", null, Ui.Big, GameSession.RestartTrack);
+                Ui.Space(content, 12f);
+            }
             // Масштаб рендера: на 4K «Авто» рендерит в 75% — почти незаметно, а FPS заметно выше.
-            int q = QualitySetup.ScaleIndex;
-            string scaleText = q == 0 ? $"Авто ({Mathf.RoundToInt(QualitySetup.EffectiveScale * 100f)}%)" : QualitySetup.ScaleNames[q];
-            if (GUILayout.Button($"Чёткость: {scaleText}", MenuStyles.Button))
-                QualitySetup.ScaleIndex = (q + 1) % QualitySetup.ScaleNames.Length;
-            GUILayout.Space(12);
-            int f = QualitySetup.FpsIndex;
-            if (GUILayout.Button($"Лимит кадров: {QualitySetup.FpsNames[f]}", MenuStyles.Button))
-                QualitySetup.FpsIndex = (f + 1) % QualitySetup.FpsNames.Length;
-            GUILayout.Space(12);
-            if (GUILayout.Button("Звук", MenuStyles.Button)) soundPage = true;
-            GUILayout.Space(12);
-            if (GUILayout.Button("В меню", MenuStyles.Button))
+            scaleButton = Ui.Button(content, "Чёткость", null, Ui.Big,
+                () => QualitySetup.ScaleIndex = (QualitySetup.ScaleIndex + 1) % QualitySetup.ScaleNames.Length);
+            Ui.Space(content, 12f);
+            fpsButton = Ui.Button(content, "Лимит кадров", null, Ui.Big,
+                () => QualitySetup.FpsIndex = (QualitySetup.FpsIndex + 1) % QualitySetup.FpsNames.Length);
+            Ui.Space(content, 12f);
+            Ui.Button(content, "Звук", null, Ui.Big, () => soundPage = true);
+            Ui.Space(content, 12f);
+            Ui.Button(content, "В меню", "back", Ui.Big, () =>
             {
                 if (CoopSession.Instance != null) CoopSession.Instance.LeaveAndReturnToMenu();
                 else GameSession.ReturnToMenu();
-            }
-
-            GUILayout.EndArea();
-            GUI.matrix = Matrix4x4.identity;
+            });
         }
+
     }
 }

@@ -99,7 +99,10 @@ namespace JunkRace
         readonly List<MeshFilter> ghostPieces = new List<MeshFilter>();
 
         Camera cam;
-        GUIStyle labelStyle, shadowStyle, centerStyle;
+        // Подписи рисуем через UiPainter (UGUI): IMGUI в Linear выбеливал цвета.
+        UiPainter paint;
+        UiPainter.Style labelStyle, shadowStyle, centerStyle, hintStyle;
+        bool stylesReady;
 
         // ---- Поиск в кучах мусора ----
         [Header("Поиск в кучах")]
@@ -120,7 +123,6 @@ namespace JunkRace
 
         void Awake()
         {
-            useGUILayout = false;   // OnGUI рисует без GUILayout — служебный проход раскладки не нужен
             player = GetComponent<PlayerController>();
             if (holdPoint == null)
             {
@@ -151,6 +153,7 @@ namespace JunkRace
 
         void OnDestroy()
         {
+            paint?.Destroy();
             foreach (var m in markers) if (m) Destroy(m);
             if (ghost) Destroy(ghost.gameObject);
             if (freeMat) Destroy(freeMat);
@@ -519,9 +522,17 @@ namespace JunkRace
 
         // ============================ Подписи и подсказка ============================
 
-        void OnGUI()
+        void LateUpdate()
         {
-            if (player.InVehicle || InGameMenu.IsOpen || RaceTimer.InteractionLocked) return;
+            paint ??= new UiPainter("Подсказки", 15);
+            paint.Begin();
+            if (!player.InVehicle && !InGameMenu.IsOpen && !RaceTimer.InteractionLocked) DrawLabels();
+            paint.End();
+        }
+
+        void DrawLabels()
+        {
+            EnsureStyles();
             DrawPointLabels();
             DrawBuildGuide();
             DrawPileLabels();
@@ -546,7 +557,7 @@ namespace JunkRace
                 : shownPoints.Count > 0 ? $"E — бросить «{Held.DisplayName}»   ({(player.FirstPersonView ? "наведи прицел на зелёное место" : "поднеси к зелёному месту")}, чтобы прикрутить)"
                 : $"E — бросить «{Held.DisplayName}»";
             if (Held != null && hiddenNotFitting > 0) hint += "   Alt — все места (прикрутить как груз)";
-            GUI.Label(new Rect(20, Screen.height - 40, 1200, 30), hint);
+            paint.Label(new Rect(20, Screen.height - 40, 1200, 30), hint, hintStyle);
         }
 
         /// <summary>Полоска поиска под прицелом и надпись «нашёл / пусто».</summary>
@@ -558,26 +569,20 @@ namespace JunkRace
             if (searchPile != null)
             {
                 float k = waitingResult ? 1f : Mathf.Clamp01(searchTime / Mathf.Max(searchDuration, 0.01f));
-                centerStyle.normal.textColor = Color.white;
-                GUI.Label(new Rect(cx - 200f, y - 30f, 400f, 26f), $"Роюсь в «{searchPile.DisplayName}»…", centerStyle);
+                paint.Label(new Rect(cx - 200f, y - 30f, 400f, 26f), $"Роюсь в «{searchPile.DisplayName}»…", centerStyle.With(Color.white));
                 var back = new Rect(cx - 150f, y, 300f, 14f);
-                var old = GUI.color;
-                GUI.color = new Color(0f, 0f, 0f, 0.6f);
-                GUI.DrawTexture(back, Texture2D.whiteTexture);
-                GUI.color = new Color(1f, 0.75f, 0.2f, 0.95f);
-                GUI.DrawTexture(new Rect(back.x + 2f, back.y + 2f, (back.width - 4f) * k, back.height - 4f), Texture2D.whiteTexture);
-                GUI.color = old;
+                paint.Box(back, new Color(0f, 0f, 0f, 0.6f));
+                paint.Box(new Rect(back.x + 2f, back.y + 2f, (back.width - 4f) * k, back.height - 4f), new Color(1f, 0.75f, 0.2f, 0.95f));
             }
             else if (Time.unscaledTime < resultUntil && !string.IsNullOrEmpty(resultText))
             {
-                centerStyle.normal.textColor = resultGood ? new Color(0.5f, 1f, 0.55f) : new Color(1f, 0.85f, 0.6f);
-                GUI.Label(new Rect(cx - 250f, y - 10f, 500f, 30f), resultText, centerStyle);
+                paint.Label(new Rect(cx - 250f, y - 10f, 500f, 30f), resultText,
+                            centerStyle.With(resultGood ? new Color(0.5f, 1f, 0.55f) : new Color(1f, 0.85f, 0.6f)));
             }
             else if (LookPile != null && Held == null)
             {
                 // Можно рыться — говорим прямо у прицела, а не только мелкой строкой внизу.
-                centerStyle.normal.textColor = new Color(1f, 0.85f, 0.35f);
-                GUI.Label(new Rect(cx - 200f, y - 10f, 400f, 30f), "E — порыться", centerStyle);
+                paint.Label(new Rect(cx - 200f, y - 10f, 400f, 30f), "E — порыться", centerStyle.With(new Color(1f, 0.85f, 0.35f)));
             }
         }
 
@@ -613,20 +618,13 @@ namespace JunkRace
                 color.a = alpha;
 
                 var rect = new Rect(s.x - 160f, Screen.height - s.y - 14f, 320f, 28f);
-                labelStyle.fontStyle = active ? FontStyle.Bold : FontStyle.Normal;
-                shadowStyle.fontStyle = labelStyle.fontStyle;
-                var oldLabel = labelStyle.normal.textColor;
-                var oldShadow = shadowStyle.normal.textColor;
-                labelStyle.normal.textColor = color;
-                shadowStyle.normal.textColor = new Color(0f, 0f, 0f, 0.8f * alpha);
-                GUI.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text, shadowStyle);
-                GUI.Label(rect, text, labelStyle);
-                labelStyle.normal.textColor = oldLabel;
-                shadowStyle.normal.textColor = oldShadow;
+                paint.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text,
+                            shadowStyle.WithBold(active).With(new Color(0f, 0f, 0f, 0.8f * alpha)));
+                paint.Label(rect, text, labelStyle.WithBold(active).With(color));
             }
         }
 
-        GUIStyle guideStyle, guideShadow;
+        static readonly UiPainter.Style GuideStyle = new UiPainter.Style(18, Color.white, TextAnchor.MiddleCenter, true, false);
 
         /// <summary>
         /// Сборка: куда нести. Нет своей машины — метки над свободными корпусами («возьми корпус»).
@@ -638,12 +636,6 @@ namespace JunkRace
             if (timer == null || timer.Phase != MatchPhase.Build) return;
             if (cam == null) cam = Camera.main;
             if (cam == null) return;
-            if (guideStyle == null)
-            {
-                guideStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 18, fontStyle = FontStyle.Bold };
-                guideShadow = new GUIStyle(guideStyle);
-                guideShadow.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
-            }
 
             var own = RaceTimer.VehicleOf(World.LocalId);
             Vector3 me = transform.position;
@@ -687,9 +679,8 @@ namespace JunkRace
                 label = (d.x < 0f ? "◀ " : "") + text.TrimStart('▼', ' ') + $"  {dist:0} м" + (d.x >= 0f ? " ▶" : "");
             }
             var rect = new Rect(s.x - 160f, Screen.height - s.y - 14f, 320f, 28f);
-            guideStyle.normal.textColor = color;
-            GUI.Label(new Rect(rect.x + 1.5f, rect.y + 1.5f, rect.width, rect.height), label, guideShadow);
-            GUI.Label(rect, label, guideStyle);
+            paint.Label(new Rect(rect.x + 1.5f, rect.y + 1.5f, rect.width, rect.height), label, GuideStyle.With(new Color(0f, 0f, 0f, 0.85f)));
+            paint.Label(rect, label, GuideStyle.With(color));
         }
 
         void DrawPointLabels()
@@ -711,21 +702,19 @@ namespace JunkRace
                 string text = isTarget ? $"{p.Label} — {slot}" : slot;
 
                 var rect = new Rect(s.x - 120f, Screen.height - s.y - 22f, 240f, 22f);
-                labelStyle.fontStyle = isTarget ? FontStyle.Bold : FontStyle.Normal;
-                shadowStyle.fontStyle = labelStyle.fontStyle;
-                GUI.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text, shadowStyle);
-                GUI.Label(rect, text, labelStyle);
+                paint.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text, shadowStyle.WithBold(isTarget));
+                paint.Label(rect, text, labelStyle.WithBold(isTarget));
             }
         }
 
         void EnsureStyles()
         {
-            if (labelStyle != null) return;
-            labelStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 15 };
-            labelStyle.normal.textColor = new Color(0.55f, 1f, 0.6f);
-            centerStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 20, fontStyle = FontStyle.Bold };
-            shadowStyle = new GUIStyle(labelStyle);
-            shadowStyle.normal.textColor = new Color(0f, 0f, 0f, 0.8f);
+            if (stylesReady) return;
+            stylesReady = true;
+            labelStyle = new UiPainter.Style(15, new Color(0.55f, 1f, 0.6f), TextAnchor.MiddleCenter, wrap: false);
+            centerStyle = new UiPainter.Style(20, Color.white, TextAnchor.MiddleCenter, true, false);
+            shadowStyle = labelStyle.With(new Color(0f, 0f, 0f, 0.8f));
+            hintStyle = new UiPainter.Style(16, new Color(0.92f, 0.92f, 0.92f), TextAnchor.UpperLeft, wrap: false);
         }
     }
 }

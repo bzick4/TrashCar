@@ -7,12 +7,12 @@ namespace JunkRace
     /// <summary>Тест-комната: подписи над свободно лежащими деталями поблизости (имя и категория).</summary>
     public class DevRoomLabels : MonoBehaviour
     {
-        void Awake() => useGUILayout = false;   // OnGUI без GUILayout — без лишнего прохода раскладки
 
         const float Range = 12f;
         readonly List<Part> parts = new List<Part>();
         float nextScan;
-        GUIStyle style;
+        UiPainter paint;   // через UGUI: IMGUI в Linear выбеливал цвета
+        static readonly UiPainter.Style Style = new UiPainter.Style(15, Color.white, TextAnchor.MiddleCenter, true, false);
 
         void Update()
         {
@@ -22,18 +22,21 @@ namespace JunkRace
             parts.AddRange(FindObjectsByType<Part>(FindObjectsSortMode.None));
         }
 
-        void OnGUI()
+        void LateUpdate()
+        {
+            paint ??= new UiPainter("Тест-комната", 14);
+            paint.Begin();
+            DrawLabels();
+            paint.End();
+        }
+
+        void OnDestroy() => paint?.Destroy();
+
+        void DrawLabels()
         {
             if (!GameSession.IsDevRoom || InGameMenu.IsOpen) return;
             var cam = Camera.main;
             if (cam == null) return;
-            style ??= new GUIStyle(GUI.skin.label)
-            {
-                alignment = TextAnchor.MiddleCenter,
-                fontSize = 15,
-                fontStyle = FontStyle.Bold,
-                normal = { textColor = Color.white },
-            };
             foreach (var p in parts)
             {
                 if (p == null || p.IsCarried || p.IsHidden || p.MountedOn != null) continue;
@@ -46,11 +49,8 @@ namespace JunkRace
                 if (s.z <= 0f) continue;
                 var rect = new Rect(s.x - 120f, Screen.height - s.y - 24f, 240f, 40f);
                 string text = p.DisplayName + "\n<size=12>" + p.CategoryName + "</size>";
-                style.richText = true;
-                GUI.color = new Color(0f, 0f, 0f, 0.7f);
-                GUI.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text, style);
-                GUI.color = Color.white;
-                GUI.Label(rect, text, style);
+                paint.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text, Style.With(new Color(0f, 0f, 0f, 0.7f)));
+                paint.Label(rect, text, Style);
             }
         }
     }

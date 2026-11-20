@@ -8,7 +8,6 @@ namespace JunkRace
     /// </summary>
     public class RemoteAvatar : MonoBehaviour, IAvatar
     {
-        void Awake() => useGUILayout = false;   // OnGUI без GUILayout — без лишнего прохода раскладки
 
 
         public ulong ClientId { get; private set; }
@@ -23,7 +22,8 @@ namespace JunkRace
         Vector3 targetPos;
         float targetYaw;
         bool hasPose;
-        GUIStyle labelStyle;
+        UiPainter paint;   // через UGUI: IMGUI в Linear выбеливал цвета
+        static readonly UiPainter.Style LabelStyle = new UiPainter.Style(18, new Color(0.92f, 0.92f, 0.92f), TextAnchor.MiddleCenter, true, false);
 
         public static RemoteAvatar Create(ulong clientId, string displayName)
         {
@@ -122,15 +122,21 @@ namespace JunkRace
             transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.Euler(0f, targetYaw, 0f), k);
         }
 
-        void OnGUI()
+        void LateUpdate()
         {
+            paint ??= new UiPainter("Имя_" + DisplayName, 13);
+            paint.Begin();
             var cam = Camera.main;
-            if (cam == null || InGameMenu.IsOpen) return;
-            Vector3 screen = cam.WorldToScreenPoint(transform.position + Vector3.up * 1.2f);
-            if (screen.z <= 0f) return;
-            labelStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 18, alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
-            GUI.Label(new Rect(screen.x - 100f, Screen.height - screen.y - 12f, 200f, 24f), DisplayName, labelStyle);
+            if (cam != null && !InGameMenu.IsOpen)
+            {
+                Vector3 screen = cam.WorldToScreenPoint(transform.position + Vector3.up * 1.2f);
+                if (screen.z > 0f)
+                    paint.Label(new Rect(screen.x - 100f, Screen.height - screen.y - 12f, 200f, 24f), DisplayName, LabelStyle);
+            }
+            paint.End();
         }
+
+        void OnDestroy() => paint?.Destroy();
 
         static void Paint(GameObject go, Color color)
         {

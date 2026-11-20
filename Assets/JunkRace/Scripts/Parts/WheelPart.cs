@@ -67,6 +67,7 @@ namespace JunkRace
             // LateUpdate выключен вместе с деталью: шину — на место, без подвески и поворота.
             if (visual != null) { visual.localPosition = Vector3.zero; visual.localRotation = Quaternion.identity; }
             hasLastPos = false;
+            WheelTracks.Break(trail);
         }
 
         protected override void LateUpdate()
@@ -85,7 +86,7 @@ namespace JunkRace
                 visual.localPosition = transform.InverseTransformDirection(down) * drop + InsetTowardHull();
                 KickDust(grounded, hit);
             }
-            else { visual.localPosition = Vector3.zero; hasLastPos = false; }
+            else { visual.localPosition = Vector3.zero; hasLastPos = false; WheelTracks.Break(trail); }
         }
 
         Collider lastGround;
@@ -101,6 +102,7 @@ namespace JunkRace
         Vector3 lastPos;
         bool hasLastPos;
         float dustDebt, lastSpeed, dustAccel;
+        readonly WheelTracks.Trail trail = new WheelTracks.Trail();
 
         /// <summary>Пыль из-под колеса: чем быстрее, тем гуще. Скорость — по сдвигу колеса (работает и у клиентов).</summary>
         void KickDust(bool grounded, RaycastHit hit)
@@ -110,8 +112,9 @@ namespace JunkRace
             Vector3 vel = hasLastPos && dt > 1e-4f ? (p - lastPos) / dt : Vector3.zero;
             lastPos = p;
             hasLastPos = true;
-            if (!grounded || hit.collider == null || IsWater(hit.collider)) { dustDebt = 0f; return; }
+            if (!grounded || hit.collider == null || IsWater(hit.collider)) { dustDebt = 0f; WheelTracks.Break(trail); return; }
             float speed = vel.magnitude;
+            if (speed > 0.5f) WheelTracks.Touch(trail, hit.point, hit.normal, vel, halfWidth > 0f ? halfWidth : radius * 0.4f, WheelDust.SurfaceColor(hit));
             // Разгон — сглаженное ускорение колеса: на старте и при наборе скорости пыли много, в ровной езде — чуть-чуть.
             float accel = dt > 1e-4f ? (speed - lastSpeed) / dt : 0f;
             lastSpeed = speed;

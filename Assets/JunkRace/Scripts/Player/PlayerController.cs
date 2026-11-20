@@ -52,7 +52,6 @@ namespace JunkRace
 
         void Awake()
         {
-            useGUILayout = false;   // OnGUI рисует без GUILayout — служебный проход раскладки не нужен
             cc = GetComponent<CharacterController>();
             carry = GetComponent<PlayerCarry>();
             Controls = new GameControls();
@@ -68,6 +67,7 @@ namespace JunkRace
 
         void OnDestroy()
         {
+            hintPaint?.Destroy();
             if (ReferenceEquals(World.Local, this)) World.Local = null;
             Controls?.Dispose();
         }
@@ -339,17 +339,27 @@ namespace JunkRace
             }
         }
 
-        void OnGUI()
+        UiPainter hintPaint;   // подсказка внизу — через UGUI (IMGUI в Linear выбеливал)
+        static readonly UiPainter.Style HintStyle = new UiPainter.Style(16, new Color(0.92f, 0.92f, 0.92f), TextAnchor.UpperLeft, wrap: false);
+
+        void LateUpdate()
         {
-            if (InGameMenu.IsOpen) return;
+            hintPaint ??= new UiPainter("Управление", 15);
+            hintPaint.Begin();
+            if (!InGameMenu.IsOpen) DrawHint();
+            hintPaint.End();
+        }
+
+        void DrawHint()
+        {
             if (driving != null)
-                GUI.Label(new Rect(20, Screen.height - 40, 1100, 30),
+                hintPaint.Label(new Rect(20, Screen.height - 40, 1100, 30),
                     "W/S — газ   A/D — руль   Space — спец   R — сброс на дорогу   F — выйти   V — вид"
-                    + (driving.HasDriverChair ? "" : "   · без кресла: стоишь, при ударе вылетишь легче"));
+                    + (driving.HasDriverChair ? "" : "   · без кресла: стоишь, при ударе вылетишь легче"), HintStyle);
             else if (seat != null)
-                GUI.Label(new Rect(20, Screen.height - 40, 900, 30), seat.Vehicle != null && !seat.Vehicle.HasDriver
+                hintPaint.Label(new Rect(20, Screen.height - 40, 900, 30), seat.Vehicle != null && !seat.Vehicle.HasDriver
                     ? "Ты пассажир, за рулём никого.   R — сброс на дорогу   F — выйти   V — вид"
-                    : "Ты пассажир. Держись!   F — выйти   V — вид");
+                    : "Ты пассажир. Держись!   F — выйти   V — вид", HintStyle);
         }
     }
 }

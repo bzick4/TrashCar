@@ -95,14 +95,14 @@ namespace JunkRace
         void OnGUI()
         {
             MenuStyles.Ensure();
+            // Фон — до смены GUI.matrix, в пикселях экрана и через UiDraw: GUI.DrawTexture в Linear его выбеливает.
+            var full = new Rect(0, 0, UnityEngine.Screen.width, UnityEngine.Screen.height);
+            if (MenuStyles.MenuBackground != null) UiDraw.Cover(full, MenuStyles.MenuBackground);
+            else UiDraw.Tex(full, MenuStyles.BackgroundTex);
+
             float scale = UnityEngine.Screen.height / 1080f;
             GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
             float w = UnityEngine.Screen.width / scale;
-
-            if (MenuStyles.MenuBackground != null)
-                GUI.DrawTexture(new Rect(0, 0, w, 1080), MenuStyles.MenuBackground, ScaleMode.ScaleAndCrop);
-            else
-                GUI.DrawTexture(new Rect(0, 0, w, 1080), MenuStyles.BackgroundTex);
 
             if (screen == Screen.Main && lastDrawnScreen != Screen.Main) fx?.Reset();
             lastDrawnScreen = screen;

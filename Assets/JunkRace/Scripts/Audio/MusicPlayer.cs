@@ -40,7 +40,6 @@ namespace JunkRace
 
         void Awake()
         {
-            useGUILayout = false;   // OnGUI рисует без GUILayout — служебный проход раскладки не нужен
             active = MakeSource();
             fading = MakeSource();
             foreach (Mood m in System.Enum.GetValues(typeof(Mood)))
@@ -114,7 +113,7 @@ namespace JunkRace
         }
 
         // ============================ Плашка «сейчас играет» ============================
-        // Анимация — DOTween: твин крутит npShow (0 — спрятана, 1 — на месте), IMGUI просто рисует по нему.
+        // Анимация — DOTween: твин крутит npShow (0 — спрятана, 1 — на месте), рисовалка UGUI просто рисует по нему.
         // В игре плашка выезжает слева, в главном меню — проявляется на месте поверх меню и гаснет.
         // SetUpdate(true): идёт и на паузе (timeScale = 0).
 
@@ -124,7 +123,6 @@ namespace JunkRace
         float npShow;
         static Texture2D plate;
         static bool plateLoaded;
-        GUIStyle npTitleStyle, npArtistStyle;
 
         void ShowNowPlaying(AudioClip clip)
         {
@@ -140,58 +138,77 @@ namespace JunkRace
                 .Append(DOTween.To(() => npShow, v => npShow = v, 0f, HideTime).SetEase(Ease.InCubic));
         }
 
-        void OnDestroy() => DOTween.Kill(TweenId);
+        void OnDestroy()
+        {
+            DOTween.Kill(TweenId);
+            paint?.Destroy();
+        }
 
-        void OnGUI()
+        UiPainter paint;
+        static readonly UiPainter.Style TitleStyle = new UiPainter.Style(19, new Color(1f, 0.82f, 0.45f), TextAnchor.MiddleLeft, true, false, false);
+        static readonly UiPainter.Style ArtistStyle = new UiPainter.Style(15, new Color(0.9f, 0.86f, 0.78f), TextAnchor.MiddleLeft, false, false, false);
+
+        void LateUpdate()
+        {
+            // Слой поверх HUD (рисовалка сама пересоздаёт его в новой сцене — плеер живёт между сценами).
+            paint ??= new UiPainter("Музыка", 50);
+            paint.Begin();
+            DrawNowPlaying();
+            paint.End();
+        }
+
+        void DrawNowPlaying()
         {
             if (npShow <= 0.001f || string.IsNullOrEmpty(npTitle)) return;
             if (!plateLoaded) { plate = Resources.Load<Texture2D>("UI/hud/music_plate"); plateLoaded = true; }
-            if (npTitleStyle == null)
-            {
-                npTitleStyle = new GUIStyle(GUI.skin.label) { fontSize = 19, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip };
-                npTitleStyle.normal.textColor = new Color(1f, 0.82f, 0.45f);
-                npArtistStyle = new GUIStyle(npTitleStyle) { fontSize = 15, fontStyle = FontStyle.Normal };
-                npArtistStyle.normal.textColor = new Color(0.9f, 0.86f, 0.78f);
-            }
 
-            GUI.depth = -50;   // поверх фона меню и HUD
-            float scale = Screen.height / 1080f;
-            var m = GUI.matrix;
-            var col = GUI.color;
+            paint.Scale = Screen.height / 1080f;
             bool menu = SceneManager.GetActiveScene().name == GameSession.MenuScene;
             const float W = 376f, H = 102f, Alpha = 0.92f;   // −20% от прежнего; чуть прозрачная
             // Как пуш-уведомление: всегда сверху слева, поверх таймера и мест — висит 4 секунды и уходит.
             const float y = 12f;
             Rect rect;
+            float alpha;
             if (menu)
             {
                 // Меню: проявляется на месте с лёгким «пружинящим» увеличением.
-                float a = Mathf.Clamp01(npShow);
-                GUI.color = new Color(1f, 1f, 1f, Alpha * a);
+                alpha = Alpha * Mathf.Clamp01(npShow);
                 float sc = 0.9f + 0.1f * npShow;
                 rect = new Rect(16f + W * (1f - sc) / 2f, y + H * (1f - sc) / 2f, W * sc, H * sc);
             }
             else
             {
                 // Игра: выезжает слева (OutBack чуть перелетает и возвращается).
-                GUI.color = new Color(1f, 1f, 1f, Alpha);
+                alpha = Alpha;
                 rect = new Rect(-W + (W + 16f) * npShow, y, W, H);
             }
-            GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
+            var tint = new Color(1f, 1f, 1f, alpha);
 
-            if (plate != null) GUI.DrawTexture(rect, plate, ScaleMode.StretchToFill);
-            else GUI.Box(rect, GUIContent.none);
+            if (plate != null) paint.Tex(rect, plate, tint);
+            else paint.Box(rect, new Color(0f, 0f, 0f, 0.6f * alpha));
             // Тёмное окно плашки — справа от кассеты.
             var inner = new Rect(rect.x + rect.width * 0.33f, rect.y + rect.height * 0.24f, rect.width * 0.59f, rect.height * 0.56f);   // правее кассеты, с отступом
+            var ts = TitleStyle.With(TitleStyle.Color * tint);
+            var ars = ArtistStyle.With(ArtistStyle.Color * tint);
             if (string.IsNullOrEmpty(npArtist))
-                GUI.Label(inner, npTitle, npTitleStyle);
+                paint.Label(inner, Fit(npTitle, ts, inner.width), ts);
             else
             {
-                GUI.Label(new Rect(inner.x, inner.y, inner.width, inner.height * 0.55f), npTitle, npTitleStyle);
-                GUI.Label(new Rect(inner.x, inner.y + inner.height * 0.52f, inner.width, inner.height * 0.45f), npArtist, npArtistStyle);
+                paint.Label(new Rect(inner.x, inner.y, inner.width, inner.height * 0.55f), Fit(npTitle, ts, inner.width), ts);
+                paint.Label(new Rect(inner.x, inner.y + inner.height * 0.52f, inner.width, inner.height * 0.45f), Fit(npArtist, ars, inner.width), ars);
             }
-            GUI.color = col;
-            GUI.matrix = m;
+        }
+
+        /// <summary>Длинное название не вылезает за окно плашки: обрезаем с многоточием.</summary>
+        string Fit(string text, UiPainter.Style st, float width)
+        {
+            if (paint.Measure(text, st).x <= width) return text;
+            for (int n = text.Length - 1; n > 1; n--)
+            {
+                string t = text.Substring(0, n).TrimEnd() + "…";
+                if (paint.Measure(t, st).x <= width) return t;
+            }
+            return text;
         }
 
         AudioClip Pick(Mood m)
