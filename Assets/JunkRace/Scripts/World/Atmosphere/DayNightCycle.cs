@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace JunkRace
 {
@@ -10,6 +11,9 @@ namespace JunkRace
     /// У всех игроков одинаково: час старта и сторона света — по сиду трассы, ход времени — по серверному
     /// времени сети (в одиночной игре — по своим часам, на паузе стоит). Погода сверху приглушает и
     /// охлаждает солнце (Weather.SunDim / SunCold) и сгущает дымку.
+    ///
+    /// Для проверки: в инспекторе «Тест: час» (−1 — обычный ход; 0–24 — стоять на этом часе),
+    /// в редакторе и Development Build F9 / F10 — на час назад / вперёд (только у себя).
     /// </summary>
     public class DayNightCycle : MonoBehaviour
     {
@@ -19,6 +23,14 @@ namespace JunkRace
 
         /// <summary>Текущее время суток, часы 0..24.</summary>
         public float Hour { get; private set; }
+
+        [Header("Проверка (только у себя)")]
+        [Tooltip("−1 — время идёт как обычно. 0–24 — стоять на этом часе.")]
+        [SerializeField, Range(-1f, 24f)] float testHour = -1f;
+        [Tooltip("Сдвиг времени, часы (F9 / F10 — ±1 час).")]
+        [SerializeField] float testShift;
+        [Tooltip("Сейчас, часы (только показ).")]
+        [SerializeField] float nowHour;
 
         float startHour, azimuth, localStart;
         Light sun;
@@ -74,7 +86,13 @@ namespace JunkRace
 
         void LateUpdate()
         {
-            Hour = Mathf.Repeat(startHour + Clock() / SecondsPerHour, 24f);
+            if (Debug.isDebugBuild && Keyboard.current != null)
+            {
+                if (Keyboard.current.f9Key.wasPressedThisFrame) testShift -= 1f;
+                if (Keyboard.current.f10Key.wasPressedThisFrame) testShift += 1f;
+            }
+            Hour = testHour >= 0f ? testHour : Mathf.Repeat(startHour + testShift + Clock() / SecondsPerHour, 24f);
+            nowHour = Mathf.Round(Hour * 100f) / 100f;
             if (sun == null)
             {
                 sun = RenderSettings.sun;
