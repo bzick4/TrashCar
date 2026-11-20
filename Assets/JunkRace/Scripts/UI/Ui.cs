@@ -22,7 +22,21 @@ namespace JunkRace
         public static readonly Color ReadyColor = new Color(0.45f, 0.9f, 0.4f);
 
         static Font font;
-        public static Font Font => font != null ? font : font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+        /// <summary>
+        /// Шрифт всего интерфейса: первый из Resources/Fonts (сейчас Noto Sans — с кириллицей).
+        /// Другой шрифт — положить его в ту папку вместо этого. Нет ни одного — встроенный.
+        /// </summary>
+        public static Font Font
+        {
+            get
+            {
+                if (font != null) return font;
+                var fonts = Resources.LoadAll<Font>("Fonts");
+                font = fonts.Length > 0 ? fonts[0] : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                return font;
+            }
+        }
 
         // ======================= Холст =======================
 
