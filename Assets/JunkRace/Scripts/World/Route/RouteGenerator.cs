@@ -981,11 +981,50 @@ namespace JunkRace
                       new Vector3(b.size.x, 2f, len), new Color(0.35f, 0.3f, 0.22f), Col.Box, Decor.Far);
                 var water = Piece("Река", cube, new Vector3(b.center.x, (WaterY + RiverBedY) / 2f, zc), Quaternion.identity,
                                   new Vector3(b.size.x, WaterY - RiverBedY, len), WaterColor, Col.None, Decor.Far);
+                // Вид — плоская поверхность с мультяшной водой (прозрачная, пена у берегов); коробка остаётся
+                // невидимой зоной для физики. Нет материала — как раньше, синяя коробка.
+                var waterMat = WaterMaterial;
+                if (waterMat != null)
+                {
+                    Hidden(water);
+                    WaterSurface(b.min.x, b.max.x, r.x, r.y, WaterY, waterMat);
+                }
                 water.AddComponent<BoxCollider>();   // триггер (WaterZone сам выставит): верх коробки — поверхность воды
                 water.AddComponent<WaterZone>();
                 from = r.y;
             }
             GroundStrip(b, from, zMax);   // по бокам и позади свалки землю уже положил BuildSurroundings
+        }
+
+        static Material waterMaterial;
+        static bool waterMaterialLoaded;
+
+        /// <summary>Мультяшная вода (Resources/Materials/ToonWater), null — нет.</summary>
+        static Material WaterMaterial
+        {
+            get
+            {
+                if (!waterMaterialLoaded) { waterMaterialLoaded = true; waterMaterial = Resources.Load<Material>("Materials/ToonWater"); }
+                return waterMaterial;
+            }
+        }
+
+        /// <summary>Поверхность воды: плоский прямоугольник на высоте y (рябь и пена — в шейдере, по мировым координатам).</summary>
+        void WaterSurface(float x0, float x1, float z0, float z1, float y, Material mat)
+        {
+            var mesh = new Mesh { name = "Вода" };
+            mesh.SetVertices(new List<Vector3> { new Vector3(x0, y, z0), new Vector3(x0, y, z1), new Vector3(x1, y, z1), new Vector3(x1, y, z0) });
+            mesh.SetTriangles(new[] { 0, 1, 2, 0, 2, 3 }, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            var go = new GameObject("Вода_поверхность");
+            go.transform.SetParent(root, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = mat;
+            mr.shadowCastingMode = ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            go.isStatic = true;
         }
 
         /// <summary>Плита земли с травой: текстура повторяется каждые GroundTile метров, как бы ни была велика плита.</summary>

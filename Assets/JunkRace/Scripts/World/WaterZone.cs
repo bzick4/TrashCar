@@ -16,7 +16,11 @@ namespace JunkRace
             box.isTrigger = true;
         }
 
-        void OnEnable() => zones.Add(this);
+        void OnEnable()
+        {
+            zones.Add(this);
+            WaterFx.Ensure();   // вода в сцене — нужны брызги
+        }
         void OnDisable() => zones.Remove(this);
 
         public static bool TryGetDepth(Vector3 point, out float depth)

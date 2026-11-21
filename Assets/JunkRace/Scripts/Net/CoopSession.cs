@@ -44,6 +44,15 @@ namespace JunkRace
         const string NameKey = "name";
         const string ReadyKey = "ready";
         const string PasswordFlagKey = "pw";
+        const string VersionKey = "ver";
+
+        /// <summary>
+        /// Версия для сети: в списке видны только сервера той же версии (иначе старая сборка с itch
+        /// зайдёт к новой — и всё развалится). Меняется сама с версией игры (Player Settings → Version);
+        /// NetProtocol — поднять вручную, если поменялось что-то сетевое, а версию забыли.
+        /// </summary>
+        const int NetProtocol = 2;   // 2 — Relay по WebSocket (WSS)
+        public static string NetVersion => Application.version + "/" + NetProtocol;
         const float StartCountdown = 3f;
 
         public enum State { Idle, Busy, InLobby, InGame }
@@ -93,6 +102,13 @@ namespace JunkRace
             nm = GetComponent<NetworkManager>();
             nm.NetworkConfig.ConnectionApproval = false;   // доступ решает сессия (пароль, лимит игроков)
             if (nm.NetworkConfig.NetworkTransport == null) nm.NetworkConfig.NetworkTransport = GetComponent<UnityTransport>();
+            // Relay по WebSocket у всех (ПК, браузер, телефон) — иначе браузер не может играть с остальными.
+            var transport = GetComponent<UnityTransport>();
+            transport.UseWebSockets = true;
+            // Очередь пакетов побольше: пока клиент грузит трассу, хост шлёт разом много объектов (детали,
+            // кучи, машины). По UDP лишнее просто перепосылалось, а по WebSocket переполнение (128 по умолчанию)
+            // рвёт связь с Relay — игрок вылетал в меню при загрузке.
+            transport.MaxPacketQueueSize = 4096;
             DontDestroyOnLoad(gameObject);
             SceneManager.activeSceneChanged += OnSceneChanged;
         }
@@ -143,6 +159,7 @@ namespace JunkRace
                 var results = await MultiplayerService.Instance.QuerySessionsAsync(new QuerySessionsOptions());
                 foreach (var s in results.Sessions)
                 {
+                    if (VersionOf(s.Properties) != NetVersion) continue;   // другая версия игры — не показываем
                     bool hasPassword = s.Properties != null
                         && s.Properties.TryGetValue(PasswordFlagKey, out var flag)
                         && flag != null && flag.Value == "1";
@@ -185,10 +202,11 @@ namespace JunkRace
                     SessionProperties = new Dictionary<string, SessionProperty>
                     {
                         { PasswordFlagKey, new SessionProperty(hasPassword ? "1" : "0", VisibilityPropertyOptions.Public) },
+                        { VersionKey, new SessionProperty(NetVersion, VisibilityPropertyOptions.Public) },
                     },
-                }.WithRelayNetwork().WithNetworkOptions(RelayUdp());
+                }.WithRelayNetwork().WithNetworkOptions(RelayNet());
 
-                session = await MultiplayerService.Instance.CreateSessionAsync(options);
+                session = await WithRetry("Создаём сервер...", () => MultiplayerService.Instance.CreateSessionAsync(options));
                 OnJoined();
             }
             catch (Exception e) { Fail(Friendly(e)); }
@@ -202,7 +220,7 @@ namespace JunkRace
 
             try
             {
-                session = await MultiplayerService.Instance.JoinSessionByIdAsync(info.Id, JoinOptions(playerName, password));
+                session = await WithRetry($"Подключение к «{info.Name}»...", () => MultiplayerService.Instance.JoinSessionByIdAsync(info.Id, JoinOptions(playerName, password)));
                 OnJoined();
             }
             catch (Exception e) { Fail(Friendly(e)); }
@@ -216,7 +234,15 @@ namespace JunkRace
 
             try
             {
-                session = await MultiplayerService.Instance.JoinSessionByCodeAsync(code.Trim().ToUpperInvariant(), JoinOptions(playerName, password));
+                session = await WithRetry("Подключение по коду...", () => MultiplayerService.Instance.JoinSessionByCodeAsync(code.Trim().ToUpperInvariant(), JoinOptions(playerName, password)));
+                // По коду можно попасть к другой версии (в списке их не видно) — сразу выходим с понятной причиной.
+                string theirs = VersionOf(session.Properties);
+                if (theirs != NetVersion)
+                {
+                    await LeaveAsync();
+                    Fail($"У хоста другая версия игры ({(string.IsNullOrEmpty(theirs) ? "старая" : theirs.Split('/')[0])}, у тебя {Application.version}). Обновитесь до одной версии.");
+                    return;
+                }
                 OnJoined();
             }
             catch (Exception e) { Fail(Friendly(e)); }
@@ -351,6 +377,32 @@ namespace JunkRace
             else Failed?.Invoke(reason);
         }
 
+        // ============================ Повтор при сбое связи ============================
+
+        const int Attempts = 3;
+
+        /// <summary>
+        /// Запрос к сервису (создать / войти) с повтором: сервис Lobby иногда не отвечает за свои 10 секунд
+        /// («Request timeout»), а со второго раза проходит. Остальные ошибки (пароль, сервер полон) — сразу наверх.
+        /// </summary>
+        async Task<T> WithRetry<T>(string busy, Func<Task<T>> request)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                if (attempt > 1) SetBusy($"{busy} (попытка {attempt} из {Attempts})");
+                try { return await request(); }
+                catch (SessionException e) when (attempt < Attempts && IsTimeout(e))
+                {
+                    Debug.LogWarning($"[JunkRace] Сервис не ответил вовремя, пробуем ещё раз ({attempt}/{Attempts}): {e.Message}");
+                    await Task.Yield();
+                }
+            }
+        }
+
+        static bool IsTimeout(Exception e) =>
+            e.Message != null && (e.Message.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0
+                               || e.Message.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0);
+
         // ============================ Мелочи ============================
 
         void SetBusy(string text)
@@ -393,14 +445,17 @@ namespace JunkRace
         {
             Password = SessionPassword(password),
             PlayerProperties = NameProperty(playerName),
-        }.WithNetworkOptions(RelayUdp());
+        }.WithNetworkOptions(RelayNet());
 
         /// <summary>
-        /// Relay по обычному UDP, без шифрования (DTLS). DTLS в Unity Transport собирается Burst'ом,
-        /// и в редакторе на Mac сборка падает («Burst failed to compile … SendCallback»). Для игры шифрование
-        /// не нужно. Протокол у хоста и клиентов обязан совпадать.
+        /// Relay по защищённому WebSocket (WSS) у всех: браузер (itch открывает игру по https) умеет только его,
+        /// а протокол у хоста и клиентов обязан совпадать — так ПК, браузер и телефон играют вместе.
+        /// Раньше был UDP: DTLS падал при сборке Burst'ом в редакторе на Mac.
         /// </summary>
-        static NetworkOptions RelayUdp() => new NetworkOptions { RelayProtocol = RelayProtocol.UDP };
+        static NetworkOptions RelayNet() => new NetworkOptions { RelayProtocol = RelayProtocol.WSS };
+
+        static string VersionOf(IReadOnlyDictionary<string, SessionProperty> props) =>
+            props != null && props.TryGetValue(VersionKey, out var v) && v != null ? v.Value : null;
 
         static Dictionary<string, PlayerProperty> NameProperty(string playerName)
         {

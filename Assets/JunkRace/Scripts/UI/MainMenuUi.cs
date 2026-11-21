@@ -282,7 +282,9 @@ namespace JunkRace
             Ui.Space(area, 0f, true);
             var bottom = Ui.Node("Низ", area);
             Ui.Row(bottom, 12f);
-            Ui.Button(bottom, "Выход", "back", Ui.Big, () => { if (!Busy()) Application.Quit(); }, 300f);
+            // В браузере выйти из игры нельзя (Application.Quit не работает) — кнопки нет.
+            if (Application.platform != RuntimePlatform.WebGLPlayer)
+                Ui.Button(bottom, "Выход", "back", Ui.Big, () => { if (!Busy()) Application.Quit(); }, 300f);
             Ui.Button(bottom, "Звук", null, Ui.Big, () => { if (!Busy()) Show(Screen.Sound); }, 240f);
             ErrorLine(area, true);
         }

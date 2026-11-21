@@ -273,6 +273,7 @@ namespace JunkRace
 
         public void SendSimpleRequest(byte type)
         {
+            if (nm == null || !nm.IsListening || Msg == null) return;   // связь уже оборвалась (сеть выключена) — слать некому
             using var w = new FastBufferWriter(8, Allocator.Temp);
             w.WriteValueSafe(type);
             Msg.SendNamedMessage(MsgReq, NetworkManager.ServerClientId, w, NetworkDelivery.ReliableSequenced);

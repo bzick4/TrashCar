@@ -112,6 +112,10 @@ namespace JunkRace
             Vector3 vel = hasLastPos && dt > 1e-4f ? (p - lastPos) / dt : Vector3.zero;
             lastPos = p;
             hasLastPos = true;
+            // Колесо в воде (низ колеса под поверхностью) — брызги, даже если оно не касается дна.
+            Vector3 wheelBottom = p - Vector3.up * radius * 0.6f;
+            if (WaterZone.TryGetDepth(wheelBottom, out float waterDepth))
+                WaterFx.WheelSpray(wheelBottom + Vector3.up * waterDepth, vel, radius, dt);
             if (!grounded || hit.collider == null || IsWater(hit.collider)) { dustDebt = 0f; WheelTracks.Break(trail); return; }
             float speed = vel.magnitude;
             if (speed > 0.5f) WheelTracks.Touch(trail, hit.point, hit.normal, vel, halfWidth > 0f ? halfWidth : radius * 0.4f, WheelDust.SurfaceColor(hit));
