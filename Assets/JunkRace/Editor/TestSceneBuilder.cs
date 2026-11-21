@@ -299,6 +299,7 @@ namespace JunkRace.EditorTools
             Use("groundSnow", "snow_ground");
 
             Use("groundMountain", "mountain_ground");
+            Use("groundSand", "desert_ground");   // пологие песчаные берега реки
             // Переходы: transition_road_<верх>_<низ>.png и transition_ground_<верх>_<низ>.png.
             // Биомы, которых в игре ещё нет (пустыня), пропускаем.
             Transitions(so, "roadTransitions", "transition_road_", TextureWrapMode.Clamp);

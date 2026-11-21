@@ -35,6 +35,8 @@ namespace JunkRace
         Color sunBaseColor = Color.white;
         int forced = -1;                  // F8: принудительная погода (-1 — по трассе)
         float lookupTimer;
+        bool covered;       // над камерой крыша (тоннель) — осадки стихают
+        float open = 1f;    // 1 — под открытым небом, 0 — под крышей (плавно)
         Vector3 lastCam;
         bool hasLastCam;
         Vector3 camVel;
@@ -109,6 +111,9 @@ namespace JunkRace
             if (lookupTimer <= 0f)
             {
                 lookupTimer = 0.25f;
+                // Крыша над камерой (тоннель)? Свою машину и игроков не считаем — только неподвижное.
+                covered = Physics.Raycast(c, Vector3.up, out var roofHit, 25f, ~0, QueryTriggerInteraction.Ignore)
+                          && roofHit.rigidbody == null && !(roofHit.collider is CharacterController);
                 Current = forced >= 0 ? (Kind)forced : KindAt(c);
             }
 
@@ -119,10 +124,11 @@ namespace JunkRace
             // Источники — над камерой и с упреждением по её скорости: на скорости в снег въезжаешь, а не догоняешь его.
             Vector3 lead = new Vector3(camVel.x, 0f, camVel.z);
             Vector3 upwind = -wind.normalized;
-            Place(snow, c + Vector3.up * 12f + lead * 2f, amount[(int)Kind.Snow] * 1100f);
-            Place(blizzard, c + Vector3.up * 5f + upwind * 14f + lead * 1f, amount[(int)Kind.Blizzard] * 3800f);
-            Place(rain, c + Vector3.up * 16f + lead * 0.9f - wind * 0.15f, amount[(int)Kind.Rain] * 3200f);
-            Place(leaves, c + Vector3.up * 3f + upwind * 22f + lead * 1f, amount[(int)Kind.Wind] * 45f);
+            open = Mathf.MoveTowards(open, covered ? 0f : 1f, dt * 2f);
+            Place(snow, c + Vector3.up * 12f + lead * 2f, amount[(int)Kind.Snow] * 1100f * open);
+            Place(blizzard, c + Vector3.up * 5f + upwind * 14f + lead * 1f, amount[(int)Kind.Blizzard] * 3800f * open);
+            Place(rain, c + Vector3.up * 16f + lead * 0.9f - wind * 0.15f, amount[(int)Kind.Rain] * 3200f * open);
+            Place(leaves, c + Vector3.up * 3f + upwind * 22f + lead * 1f, amount[(int)Kind.Wind] * 45f * open);
 
             ApplyMood();
         }

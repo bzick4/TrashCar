@@ -476,6 +476,7 @@ namespace JunkRace
                 if (h.rigidbody == Body) continue;
                 if (h.rigidbody != null && !h.rigidbody.isKinematic) continue;   // свободные детали и чужие машины
                 if (h.collider is CharacterController) continue;   // игрок (у чужих аватаров коллайдера нет)
+                if (h.point.y > point.y + 3f) continue;   // крыша тоннеля над дорогой — не опора (трамплины ниже)
                 if (h.distance < bestDist) { bestDist = h.distance; y = h.point.y; found = true; }
             }
             if (found && WaterZone.TryGetDepth(new Vector3(point.x, y + 0.05f, point.z), out float depth))

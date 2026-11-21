@@ -45,6 +45,8 @@ namespace JunkRace
         [SerializeField] Material sideSnow;
         [SerializeField] Material groundSnow;
         [SerializeField] Material groundMountain;
+        [Tooltip("Песок пологих берегов реки (Textures/desert_ground.png; пусто — песочный цвет).")]
+        [SerializeField] Material groundSand;
         [Tooltip("Картинки-переходы земли (Textures/transition_ground_<верх>_<низ>.png): полоса поперёк карты на границе участков.")]
         [SerializeField] RoadTransition[] groundTransitions;
         [Tooltip("Картинки-переходы дороги между биомами (Textures/transition_road_<верх>_<низ>.png): " +
@@ -216,6 +218,7 @@ namespace JunkRace
             SectionStarts.Clear();
             SectionBiomes.Clear();
             rivers.Clear();
+            canyons.Clear();
             zones.Clear();
             routeLength = 0f;
             map = new RouteMap { OffMargin = offRouteMargin };
@@ -281,6 +284,7 @@ namespace JunkRace
             Run(main, 30f, 0f, 0f);
 
             foreach (var p in map.Paths) p.SmoothForwards();
+            foreach (var c in canyons) c.Fill();   // профиль ущелий — до декора: ему нужно знать, где низина
             foreach (var p in map.Paths) if (p.BuildMesh) BuildRoadMesh(p);
             foreach (var f in forkFills) BuildForkFill(f.left, f.right);
             forkFills.Clear();
@@ -315,7 +319,7 @@ namespace JunkRace
             {
                 if (i == forkAt) ForestFork();
                 // Река — не чаще одной на участок и не больше двух на трассу.
-                int kinds = rivers.Count < 2 && !riverInSection ? 6 : 5;
+                int kinds = CanRiver ? 6 : 5;
                 switch (rng.Next(kinds))
                 {
                     case 0: ForestRoadChunk(); break;
@@ -323,7 +327,7 @@ namespace JunkRace
                     case 2: ForestLogs(); break;
                     case 3: ForestHills(); break;
                     case 4: ForestSweep(); break;
-                    default: ForestRiver(); riverInSection = true; break;
+                    default: RiverCrossing(ForestWidth); break;
                 }
             }
             if (forkAt == chunks) ForestFork();
@@ -331,6 +335,7 @@ namespace JunkRace
 
         void BuildMountains(int chunks, bool fork)
         {
+            riverInSection = false;
             Run(main, 20f, RandRange(-35f, 35f), 0f, MountainWidth);
             // В горы — сначала вверх: развилке с прыжком нужна высота, иначе падать некуда.
             MountainClimb();
@@ -339,12 +344,14 @@ namespace JunkRace
             for (int i = 0; i < chunks; i++)
             {
                 if (i == forkAt) MountainFork();
-                switch (rng.Next(4))
+                switch (rng.Next(CanRiver ? 6 : 5))
                 {
                     case 0: MountainSerpentine(); break;
                     case 1: MountainRockfall(); break;
                     case 2: MountainLedge(); break;
-                    default: MountainDip(); break;
+                    case 3: MountainDip(); break;
+                    case 4: MountainCanyon(); break;                // ущелье ниже земли с тоннелем
+                    default: RiverCrossing(MountainWidth); break;   // горная речка в долине
                 }
             }
             // Спуск к равнине.
@@ -385,28 +392,75 @@ namespace JunkRace
         const float RiverBedY = -2.6f;   // дно реки
         static readonly Color WaterColor = new Color(0.2f, 0.45f, 0.9f);
 
-        /// <summary>Реки поперёк карты: интервалы по z (дорога идёт только вперёд по z — пересекает каждую один раз).</summary>
-        readonly List<Vector2> rivers = new List<Vector2>();
-        bool riverInSection;
-
-        /// <summary>Река поперёк дороги: спуск к воде, брод, подъём на другой берег.</summary>
-        void ForestRiver()
+        /// <summary>
+        /// Река поперёк карты (дорога идёт только вперёд по z — пересекает каждую один раз): русло петляет
+        /// по синусоиде, но у брода идёт ровно поперёк дороги; берега пологие, песчаные.
+        /// </summary>
+        struct River
         {
-            if (pos.y > 0.3f) Run(main, 16f, 0f, -pos.y, ForestWidth);
-            Run(main, 14f, -yaw * 0.7f, 0f, ForestWidth);   // почти поперёк реки
-            float z0 = pos.z;
-            Run(main, 10f, 0f, FordY - pos.y, ForestWidth + 1f, FordY);
-            Run(main, RandRange(14f, 24f), RandRange(-8f, 8f), 0f, ForestWidth + 1f, FordY);
-            Run(main, 10f, 0f, -FordY, ForestWidth, FordY);
-            float z1 = pos.z;
-            // Берег — там, где дорога уже ниже воды (~3 м от начала спуска).
-            rivers.Add(new Vector2(z0 + 3f, z1 - 3f));
-            Run(main, 12f, 0f, 0f, ForestWidth);
+            public float Zc, HalfW, RoadX, Amp, Freq, Phase, BankW;
+            public Biome Biome;   // берега и вода — по биому участка
+
+            /// <summary>Середина русла на этом x: у дороги — ровно Zc, дальше изгиб нарастает.</summary>
+            public float CenterZ(float x)
+            {
+                float k = Mathf.Clamp01((Mathf.Abs(x - RoadX) - 15f) / 45f);
+                k = k * k * (3f - 2f * k);
+                return Zc + Amp * k * Mathf.Sin(x * Freq + Phase);
+            }
+
+            /// <summary>Полоса по z, где лежит река с берегами (дальше — обычная земля).</summary>
+            public float ZMin => Zc - Amp - HalfW - BankW - 1f;
+            public float ZMax => Zc + Amp + HalfW + BankW + 1f;
         }
 
+        readonly List<River> rivers = new List<River>();
+        const float RiverBank = 9f;   // ширина пологого пляжа от кромки воды до травы, м
+        bool riverInSection;
+
+        /// <summary>Можно ли на этом участке реку: не больше одной на участок и двух на трассу.</summary>
+        bool CanRiver => rivers.Count < 2 && !riverInSection;
+
+        /// <summary>
+        /// Река поперёк дороги (в любом биоме): спуск к воде, брод, подъём на другой берег.
+        /// В горах дорога высоко — сначала спускаемся к равнине серпантином, а не обрывом.
+        /// </summary>
+        void RiverCrossing(float width)
+        {
+            riverInSection = true;
+            while (pos.y > 3f) Run(main, 40f, RandRange(-12f, 12f), -Mathf.Min(pos.y - 1f, 8f), width);
+            if (pos.y > 0.3f) Run(main, 16f, 0f, -pos.y, width);
+            Run(main, 14f, -yaw * 0.7f, 0f, width);   // почти поперёк реки
+            float z0 = pos.z, x0 = pos.x;
+            Run(main, 10f, 0f, FordY - pos.y, width + 1f, FordY);
+            Run(main, RandRange(14f, 24f), RandRange(-8f, 8f), 0f, width + 1f, FordY);
+            Run(main, 10f, 0f, -FordY, width, FordY);
+            float z1 = pos.z, x1 = pos.x;
+            // Кромка воды — там, где дорога уже ниже воды (~3 м от начала спуска).
+            float w0 = z0 + 3f, w1 = z1 - 3f;
+            rivers.Add(new River
+            {
+                Zc = (w0 + w1) / 2f, HalfW = (w1 - w0) / 2f, RoadX = (x0 + x1) / 2f,
+                Amp = RandRange(6f, 10f), Freq = 2f * Mathf.PI / RandRange(90f, 150f), Phase = RandRange(0f, 2f * Mathf.PI),
+                BankW = RiverBank, Biome = biome,
+            });
+            Run(main, 12f, 0f, 0f, width);
+        }
+
+        /// <summary>В низине: река с пляжем или ущелье — без деревьев, камней и гор (имя — историческое).</summary>
         bool InRiver(Vector3 p, float margin = 1f)
         {
-            foreach (var r in rivers) if (p.z > r.x - margin && p.z < r.y + margin) return true;
+            // Вода и нижняя часть пляжа — без деревьев и кустов.
+            foreach (var r in rivers) if (Mathf.Abs(p.z - r.CenterZ(p.x)) < r.HalfW + r.BankW * 0.5f + margin) return true;
+            foreach (var c in canyons) if (c.Covers(p, margin)) return true;
+            return false;
+        }
+
+        /// <summary>Точка дороги под водой (брод): столбики и мусор там ни к чему.</summary>
+        bool UnderWater(Vector3 p)
+        {
+            if (p.y >= WaterY + 0.2f) return false;
+            foreach (var r in rivers) if (Mathf.Abs(p.z - r.CenterZ(p.x)) < r.HalfW + 3f) return true;
             return false;
         }
 
@@ -486,6 +540,82 @@ namespace JunkRace
             Run(main, 35f, RandRange(-15f, 15f), depth, MountainWidth);
         }
 
+        // ---------------- Ущелье с тоннелем ----------------
+
+        const float CanyonShoulder = 1.5f;   // обочина на дне ущелья, м
+        const float CanyonWall = 3.5f;       // ширина скальной стены по горизонтали, м
+
+        /// <summary>
+        /// Ущелье: кусок дороги ниже уровня земли между скальными стенами; в середине — тоннель
+        /// (крыша вровень с землёй). Rows — точки дороги по ущелью (заполняются после сглаживания).
+        /// </summary>
+        sealed class Canyon
+        {
+            public RoutePath Path;
+            public int From, To;                  // точки пути: начало спуска и конец подъёма
+            public float TunnelFrom, TunnelTo;    // тоннель: расстояния по пути
+            public readonly List<RouteSample> Rows = new List<RouteSample>();
+
+            public void Fill()
+            {
+                Rows.Clear();
+                for (int i = From; i <= To && i < Path.Samples.Count; i++) Rows.Add(Path.Samples[i]);
+            }
+
+            public float ZMin => Rows.Count > 0 ? Rows[0].Pos.z : 0f;
+            public float ZMax => Rows.Count > 0 ? Rows[Rows.Count - 1].Pos.z : 0f;
+
+            /// <summary>Точка дороги ущелья на этом z (Rows идут вперёд по z).</summary>
+            public bool At(float z, out RouteSample s)
+            {
+                s = default;
+                if (Rows.Count < 2 || z < ZMin || z > ZMax) return false;
+                for (int i = 0; i + 1 < Rows.Count; i++)
+                {
+                    var a = Rows[i]; var b = Rows[i + 1];
+                    if (z < a.Pos.z || z > b.Pos.z) continue;
+                    float t = b.Pos.z - a.Pos.z > 1e-4f ? (z - a.Pos.z) / (b.Pos.z - a.Pos.z) : 0f;
+                    s = RoutePath.Lerp(a, b, t);
+                    return true;
+                }
+                return false;
+            }
+
+            /// <summary>Полуширина по x (дорога может идти наискосок).</summary>
+            public static float HalfX(RouteSample s) => s.HalfWidth / Mathf.Max(0.6f, Mathf.Abs(s.Forward.z));
+
+            /// <summary>Точка в ущелье или на его стенах (там, где дорога заметно ниже земли).</summary>
+            public bool Covers(Vector3 p, float margin)
+            {
+                if (!At(p.z, out var s) || s.Pos.y > -0.8f) return false;
+                return Mathf.Abs(p.x - s.Pos.x) < HalfX(s) + CanyonShoulder + CanyonWall + margin;
+            }
+        }
+
+        readonly List<Canyon> canyons = new List<Canyon>();
+
+        /// <summary>Ущелье: спуск ниже земли, дно между скалами (в середине тоннель), подъём обратно.</summary>
+        void MountainCanyon()
+        {
+            // К земле (в горах дорога высоко), чуть выпрямиться — ущелье идёт вперёд.
+            while (pos.y > 3f) Run(main, 40f, RandRange(-12f, 12f), -Mathf.Min(pos.y - 1f, 8f), MountainWidth);
+            if (pos.y > 0.2f) Run(main, 14f, 0f, -pos.y, MountainWidth);
+            Run(main, 10f, -yaw * 0.5f, 0f, MountainWidth);
+            int from = main.Samples.Count - 1;
+            float depth = RandRange(6.5f, 8f);
+            Run(main, 34f, RandRange(-8f, 8f), -depth, MountainWidth, -depth);
+            float bottom0 = main.Length;
+            Run(main, RandRange(55f, 85f), RandRange(-16f, 16f), 0f, MountainWidth, -depth);
+            float bottom1 = main.Length;
+            Run(main, 34f, RandRange(-8f, 8f), depth, MountainWidth, -depth);
+            canyons.Add(new Canyon
+            {
+                Path = main, From = from, To = main.Samples.Count - 1,
+                TunnelFrom = bottom0 + 6f, TunnelTo = bottom1 - 6f,
+            });
+            Run(main, 10f, 0f, 0f, MountainWidth);
+        }
+
         void MountainFork()
         {
             var jump = new Branch { Name = "Прыжок", Width = MountainWidth, Bulge = 8f, Wobble = 0f, Waves = 0, Kind = BranchKind.Jump };
@@ -510,18 +640,20 @@ namespace JunkRace
 
         void BuildSnow(int chunks, bool fork)
         {
+            riverInSection = false;
             // Сначала к равнине (после гор).
             Run(main, 20f, RandRange(-30f, 30f), -Mathf.Min(pos.y, 2f), SnowWidth);
             int forkAt = fork ? rng.Next(0, chunks + 1) : -1;
             for (int i = 0; i < chunks; i++)
             {
                 if (i == forkAt) SnowFork();
-                switch (rng.Next(4))
+                switch (rng.Next(CanRiver ? 5 : 4))
                 {
                     case 0: SnowRoadChunk(); break;
                     case 1: SnowDrifts(); break;
                     case 2: SnowPass(); break;
-                    default: SnowWaves(); break;
+                    case 3: SnowWaves(); break;
+                    default: RiverCrossing(SnowWidth); break;   // ледяная речка
                 }
             }
             if (forkAt == chunks) SnowFork();
@@ -970,34 +1102,280 @@ namespace JunkRace
             // Под свалкой земля своя — наша начинается от выезда.
             float zMin = transform.position.z - 0.5f;
             float zMax = b.max.z;
-            // Земля полосами между реками; в реках — вода и дно.
-            rivers.Sort((p, q) => p.x.CompareTo(q.x));
+            // Земля полосами между реками; в реках — русло с пологими берегами и вода.
+            // Особые полосы по z — реки и ущелья: земля в них своя (рельеф с руслом или вырезом).
+            var special = new List<(float zMin, float zMax, System.Action build)>();
+            foreach (var r in rivers) { var rr = r; special.Add((rr.ZMin, rr.ZMax, () => BuildRiver(b, rr))); }
+            foreach (var c in canyons) if (c.Rows.Count > 1) { var cc = c; special.Add((cc.ZMin, cc.ZMax, () => BuildCanyon(b, cc))); }
+            special.Sort((p, q) => p.zMin.CompareTo(q.zMin));
             float from = zMin;
-            foreach (var r in rivers)
+            foreach (var sp in special)
             {
-                GroundStrip(b, from, r.x);
-                float len = r.y - r.x, zc = (r.x + r.y) / 2f;
-                Piece("Дно_реки", cube, new Vector3(b.center.x, RiverBedY - 1f, zc), Quaternion.identity,
-                      new Vector3(b.size.x, 2f, len), new Color(0.35f, 0.3f, 0.22f), Col.Box, Decor.Far);
-                var water = Piece("Река", cube, new Vector3(b.center.x, (WaterY + RiverBedY) / 2f, zc), Quaternion.identity,
-                                  new Vector3(b.size.x, WaterY - RiverBedY, len), WaterColor, Col.None, Decor.Far);
-                // Вид — плоская поверхность с мультяшной водой (прозрачная, пена у берегов); коробка остаётся
-                // невидимой зоной для физики. Нет материала — как раньше, синяя коробка.
-                var waterMat = WaterMaterial;
-                if (waterMat != null)
-                {
-                    Hidden(water);
-                    WaterSurface(b.min.x, b.max.x, r.x, r.y, WaterY, waterMat);
-                }
-                water.AddComponent<BoxCollider>();   // триггер (WaterZone сам выставит): верх коробки — поверхность воды
-                water.AddComponent<WaterZone>();
-                from = r.y;
+                GroundStrip(b, from, sp.zMin);
+                sp.build();
+                from = Mathf.Max(from, sp.zMax);
             }
             GroundStrip(b, from, zMax);   // по бокам и позади свалки землю уже положил BuildSurroundings
         }
 
-        static Material waterMaterial;
+        static readonly Color SandColor = new Color(0.82f, 0.72f, 0.52f);
+
+        /// <summary>
+        /// Река: рельеф (дно, пологий песчаный пляж, полоса мокрого песка, трава до краёв полосы) одним мешем
+        /// с коллайдером, поверх — вода. Рельеф строится в «системе русла»: строки — отступы от середины русла,
+        /// поэтому изгибы гладкие при любом шаге; крайние строки — прямые, вровень с соседними плитами земли.
+        /// </summary>
+        void BuildRiver(Bounds b, River r)
+        {
+            float h = r.HalfW, B = r.BankW;
+            // Отступы от середины: дно → кромка воды → пляж → трава.
+            var half = new List<float> { 0.3f * h, 0.55f * h, 0.75f * h, 0.88f * h, 0.96f * h, h, h + 0.6f, h + 1.5f, h + 3f, h + 5f, h + 7f, h + B };
+            var offsets = new List<float>();
+            for (int i = half.Count - 1; i >= 0; i--) offsets.Add(-half[i]);
+            offsets.Add(0f);
+            offsets.AddRange(half);
+
+            float Height(float o)
+            {
+                float u = Mathf.Abs(o);
+                if (u <= h) return Mathf.Lerp(RiverBedY, WaterY - 0.04f, Mathf.Pow(u / h, 1.6f));   // у кромки мелко и полого
+                float t = Mathf.Clamp01((u - h) / B);
+                return Mathf.Lerp(WaterY - 0.04f, GroundY, t * t * (3f - 2f * t));
+            }
+
+            int cols = Mathf.Max(2, Mathf.CeilToInt(b.size.x / 2f) + 1);
+            int rows = offsets.Count + 2;   // + прямые края
+            var verts = new List<Vector3>(cols * rows);
+            var uvs = new List<Vector2>(cols * rows);
+            for (int i = 0; i < cols; i++)
+            {
+                float x = Mathf.Lerp(b.min.x, b.max.x, i / (float)(cols - 1));
+                float c = r.CenterZ(x);
+                verts.Add(new Vector3(x, GroundY, r.ZMin));
+                foreach (var o in offsets) verts.Add(new Vector3(x, Height(o), c + o));
+                verts.Add(new Vector3(x, GroundY, r.ZMax));
+            }
+            foreach (var v in verts) uvs.Add(new Vector2(v.x, v.z) / GroundTile);
+
+            // Сабмеши: 0 — трава, 1 — песок (дно и пляж), 2 — мокрый песок у кромки.
+            var subs = new[] { new List<int>(), new List<int>(), new List<int>() };
+            for (int i = 0; i + 1 < cols; i++)
+                for (int j = 0; j + 1 < rows; j++)
+                {
+                    int sub = 0;
+                    if (j > 0 && j + 1 < rows - 1)
+                    {
+                        float om = Mathf.Abs((offsets[j - 1] + offsets[j]) * 0.5f);
+                        sub = om > h && om < h + 1.6f ? 2 : om <= h + B * 0.6f ? 1 : 0;
+                    }
+                    int a = i * rows + j, n = (i + 1) * rows + j;
+                    subs[sub].Add(a); subs[sub].Add(a + 1); subs[sub].Add(n + 1);
+                    subs[sub].Add(a); subs[sub].Add(n + 1); subs[sub].Add(n);
+                }
+
+            var mesh = new Mesh { name = "Река_рельеф" };
+            if (verts.Count > 65000) mesh.indexFormat = IndexFormat.UInt32;
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.subMeshCount = 3;
+            for (int k = 0; k < 3; k++) mesh.SetTriangles(subs[k], k);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            var biomeHere = r.Biome;
+            var grass = GroundMaterial(biomeHere);
+            if (grass != null) grass = Tiled(grass, Vector2.one);   // UV рельефа — уже в плитках по 10 м
+            else grass = Mat(Grass);
+            // Берега: в лесу — песок, в горах — горный грунт с камешками, в снегу — снег.
+            Material bankSrc = biomeHere == Biome.Snow ? groundSnow : biomeHere == Biome.Mountains ? groundMountain : groundSand;
+            Color bankColor = biomeHere == Biome.Snow ? SnowWhite : biomeHere == Biome.Mountains ? MountainGround : SandColor;
+            // Мокрая полоса у воды: темнее; снег — в голубизну (подтаявший, с ледком).
+            Color wetTint = biomeHere == Biome.Snow ? new Color(0.78f, 0.86f, 0.98f, 1f) : new Color(0.7f, 0.68f, 0.66f, 1f);
+            var sand = bankSrc != null ? Tiled(bankSrc, Vector2.one) : Mat(bankColor);
+            Material wet;
+            if (bankSrc != null)
+            {
+                wet = new Material(sand) { name = bankSrc.name + " мокрый" };
+                wet.color = bankSrc.color * wetTint;
+            }
+            else wet = Mat(bankColor * wetTint);
+
+            var go = new GameObject("Река_берега");
+            go.transform.SetParent(root, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterials = new[] { grass, sand, wet };
+            mr.shadowCastingMode = ShadowCastingMode.Off;
+            go.AddComponent<MeshCollider>().sharedMesh = mesh;
+            go.isStatic = true;
+
+            // Вода: зона для физики (коробка-триггер, верх — поверхность) на всю полосу русла и плоская поверхность.
+            // Ниже уровня воды рельеф есть только в русле — значит всё, что в коробке ниже поверхности, в реке.
+            float wz0 = r.Zc - r.Amp - h - 1f, wz1 = r.Zc + r.Amp + h + 1f;
+            var water = Piece("Река", cube, new Vector3(b.center.x, (WaterY + RiverBedY - 1f) / 2f, (wz0 + wz1) / 2f), Quaternion.identity,
+                              new Vector3(b.size.x, WaterY - RiverBedY + 1f, wz1 - wz0), WaterColor, Col.None, Decor.Far);
+            var waterMat = WaterMaterial;
+            if (waterMat != null)
+            {
+                Hidden(water);
+                if (biomeHere == Biome.Snow) waterMat = IcyWater(waterMat);
+                WaterSurface(b.min.x, b.max.x, r.ZMin, r.ZMax, WaterY, waterMat);   // где берег выше воды — вода просто не видна
+            }
+            water.AddComponent<BoxCollider>();   // триггер (WaterZone сам выставит)
+            water.AddComponent<WaterZone>();
+        }
+
+        /// <summary>
+        /// Ущелье: рельеф полосой по z на всю ширину карты — ровная земля, по краям ущелья скальные стены вниз,
+        /// дно на уровне дороги. Строки — точки дороги (по z), столбцы — отступы по x от дороги.
+        /// В середине — тоннель: крыша вровень с землёй, деревянные порталы, фонари внутри.
+        /// </summary>
+        void BuildCanyon(Bounds b, Canyon c)
+        {
+            var rows = c.Rows;
+            // Отступы (по одну сторону): дно, обочина, низ стены, середина стены (рваная), край, дальше ровно.
+            int perSide = 6;
+            int cols = 2 + perSide * 2 + 1 + 2;   // прямые края карты + стороны + середина
+            var verts = new List<Vector3>(rows.Count * cols);
+            var uvs = new List<Vector2>(rows.Count * cols);
+            var kinds = new List<int>();   // 0 — земля/дно, 1 — стена (по столбцу)
+            for (int j = 0; j < rows.Count; j++)
+            {
+                var s = rows[j];
+                float hx = Canyon.HalfX(s), y = s.Pos.y, z = s.Pos.z;
+                float deep = Mathf.Max(0f, GroundY - y);
+                float floor = y - 0.08f;
+                float jag(float side) => Mathf.Sin(z * 0.37f + side * 1.7f) * 0.5f + Mathf.Sin(z * 1.13f + side) * 0.25f;
+                void Col(float x, float h, int kind)
+                {
+                    verts.Add(new Vector3(x, h, z));
+                    uvs.Add(kind == 1 ? new Vector2(z / SideTile, h / SideTile) : new Vector2(x, z) / GroundTile);
+                    if (j == 0) kinds.Add(kind);
+                }
+                Col(b.min.x, GroundY, 0);
+                for (int side = -1; side <= 1; side += 2)
+                {
+                    // Слева направо: для side=-1 идём от края к середине, для side=+1 — от середины к краю.
+                    var list = new (float o, float h, int kind)[]
+                    {
+                        (hx + CanyonShoulder + CanyonWall + 2f, GroundY, 0),
+                        (hx + CanyonShoulder + CanyonWall, GroundY, 1),
+                        (hx + CanyonShoulder + CanyonWall * 0.55f + jag(side) * 0.6f, y + deep * 0.72f + jag(-side) * 0.4f, 1),
+                        (hx + CanyonShoulder + 0.35f, y + deep * 0.18f, 1),
+                        (hx + CanyonShoulder, floor, 0),
+                        (hx * 0.5f, floor, 0),
+                    };
+                    if (side < 0)
+                        foreach (var e in list) Col(s.Pos.x - e.o, Mathf.Min(e.h, GroundY), e.kind);
+                    else
+                    {
+                        if (side > 0) Col(s.Pos.x, floor, 0);   // середина
+                        for (int k = list.Length - 1; k >= 0; k--) Col(s.Pos.x + list[k].o, Mathf.Min(list[k].h, GroundY), list[k].kind);
+                    }
+                }
+                Col(b.max.x, GroundY, 0);
+            }
+            cols = verts.Count / rows.Count;
+
+            // Квадрат — стена, если хоть один из двух столбцов — стена (скальная текстура), иначе земля.
+            var ground = new List<int>(); var walls = new List<int>();
+            for (int j = 0; j + 1 < rows.Count; j++)
+                for (int i = 0; i + 1 < cols; i++)
+                {
+                    var list = kinds[i] == 1 && kinds[i + 1] == 1 || (kinds[i] == 1) != (kinds[i + 1] == 1) && (i > 0 && i + 2 < cols) && Mathf.Abs(verts[j * cols + i].y - verts[j * cols + i + 1].y) > 0.3f ? walls : ground;
+                    int a = j * cols + i, n = (j + 1) * cols + i;
+                    // Строки — по z, столбцы — по x: обход по часовой, если смотреть сверху.
+                    list.Add(a); list.Add(n); list.Add(n + 1);
+                    list.Add(a); list.Add(n + 1); list.Add(a + 1);
+                }
+
+            var mesh = new Mesh { name = "Ущелье" };
+            if (verts.Count > 65000) mesh.indexFormat = IndexFormat.UInt32;
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.subMeshCount = 2;
+            mesh.SetTriangles(ground, 0);
+            mesh.SetTriangles(walls, 1);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            var groundMat = groundMountain != null ? Tiled(groundMountain, Vector2.one) : Mat(MountainGround);
+            var wallMat = sideMountain != null ? sideMountain : Mat(MountainSide);
+            var go = new GameObject("Ущелье");
+            go.transform.SetParent(root, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterials = new[] { groundMat, wallMat };
+            go.AddComponent<MeshCollider>().sharedMesh = mesh;
+            go.isStatic = true;
+
+            BuildTunnel(c, groundMat);
+        }
+
+        static readonly Color PortalWood = new Color(0.42f, 0.28f, 0.17f);
+        static readonly Color LampColor = new Color(1f, 0.82f, 0.5f);
+
+        /// <summary>Тоннель: крыша кусками по дороге (сверху — земля вровень), порталы у входа и выхода, фонари.</summary>
+        void BuildTunnel(Canyon c, Material roofMat)
+        {
+            var path = c.Path;
+            if (c.TunnelTo - c.TunnelFrom < 10f) return;
+            for (float d = c.TunnelFrom; d < c.TunnelTo; d += 4f)
+            {
+                var s = path.At(d + 2f);
+                float w = (s.HalfWidth + CanyonShoulder + CanyonWall + 1.5f) * 2f;
+                // Верх чуть ниже земли — не мерцает с ней; низ — над дорогой с запасом.
+                var roof = Piece("Тоннель_крыша", cube, new Vector3(s.Pos.x, GroundY - 1.02f, s.Pos.z), Quaternion.LookRotation(s.Forward),
+                                 new Vector3(w, 2f, 4.3f), MountainGround, Col.Box);
+                roof.GetComponent<MeshRenderer>().sharedMaterial = roofMat;
+            }
+            Portal(path.At(c.TunnelFrom));
+            Portal(path.At(c.TunnelTo));
+            // Фонари под потолком: тёплый свет, без теней (дёшево).
+            for (float d = c.TunnelFrom + 6f; d < c.TunnelTo - 3f; d += 12f)
+            {
+                var s = path.At(d);
+                Vector3 at = new Vector3(s.Pos.x, GroundY - 2.35f, s.Pos.z);
+                Piece("Фонарь", sphere, at, Quaternion.identity, Vector3.one * 0.35f, LampColor * 1.4f, Col.None, Decor.Small);
+                var lightGo = new GameObject("Свет_тоннеля");
+                lightGo.transform.SetParent(root, false);
+                lightGo.transform.position = at - Vector3.up * 0.4f;
+                var l = lightGo.AddComponent<Light>();
+                l.type = LightType.Point;
+                l.color = LampColor;
+                l.range = 11f;
+                l.intensity = 3f;
+                l.shadows = LightShadows.None;
+            }
+        }
+
+        /// <summary>Портал тоннеля: два столба по краям дороги и балка — как вход в шахту.</summary>
+        void Portal(RouteSample s)
+        {
+            var rot = Quaternion.LookRotation(s.Forward);
+            Vector3 right = rot * Vector3.right;
+            float top = GroundY - 2.02f - 0.6f, h = top - s.Pos.y;   // балка — сразу под крышей тоннеля
+            for (int k = -1; k <= 1; k += 2)
+                Piece("Портал_столб", cube, s.Pos + right * k * (s.HalfWidth + 0.5f) + Vector3.up * (h / 2f), rot,
+                      new Vector3(0.6f, h, 0.6f), PortalWood, Col.Box);
+            Piece("Портал_балка", cube, new Vector3(s.Pos.x, top + 0.3f, s.Pos.z), rot,
+                  new Vector3(s.HalfWidth * 2f + 2.2f, 0.6f, 0.7f), PortalWood, Col.Box);
+        }
+
+        static Material waterMaterial, icyWater;
         static bool waterMaterialLoaded;
+
+        /// <summary>Вода в снегу: холоднее и бледнее, пена гуще (ледяная крошка).</summary>
+        static Material IcyWater(Material src)
+        {
+            if (icyWater != null) return icyWater;
+            icyWater = new Material(src) { name = src.name + " ледяная" };
+            icyWater.SetColor("_ShallowColor", new Color(0.62f, 0.88f, 0.94f, 0.62f));
+            icyWater.SetColor("_DeepColor", new Color(0.13f, 0.32f, 0.52f, 0.94f));
+            icyWater.SetFloat("_BandCount", 2.4f);
+            icyWater.SetFloat("_BandSpeed", 0.22f);
+            return icyWater;
+        }
 
         /// <summary>Мультяшная вода (Resources/Materials/ToonWater), null — нет.</summary>
         static Material WaterMaterial
@@ -1153,7 +1531,7 @@ namespace JunkRace
                     for (float d = 40f; d < path.Length - 10f; d += RandRange(25f, 55f))
                     {
                         var s = path.At(d);
-                        if (!s.Road || s.Pos.y < WaterY + 0.2f || rng.NextDouble() > 0.5) continue;
+                        if (!s.Road || UnderWater(s.Pos) || rng.NextDouble() > 0.5) continue;
                         int n = rng.Next(1, 4);
                         float lat = RandRange(-(s.HalfWidth - 1.5f), s.HalfWidth - 1.5f);
                         for (int i = 0; i < n; i++)
@@ -1167,7 +1545,7 @@ namespace JunkRace
                 for (float d = 4f; d < path.Length; d += 12f)
                 {
                     var s = path.At(d);
-                    if (!s.Road || s.Pos.y < WaterY + 0.2f) continue;   // у брода столбики под водой ни к чему
+                    if (!s.Road || UnderWater(s.Pos)) continue;   // у брода столбики под водой ни к чему
                     for (int k = -1; k <= 1; k += 2)
                     {
                         Vector3 p = s.Pos + s.Right * k * (s.HalfWidth + 0.4f);
@@ -1320,7 +1698,7 @@ namespace JunkRace
                 // Холм поближе: та же модель горы, но поменьше.
                 float r = RandRange(8f, 16f);
                 Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r + RandRange(15f, 45f));
-                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f))
+                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f) && !InRiver(p, r))
                 {
                     float h = RandRange(0.6f, 1f);
                     Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f - r * 0.1f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
@@ -1338,7 +1716,7 @@ namespace JunkRace
                 float r = RandRange(18f, 40f);
                 Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 0.8f + RandRange(15f, 50f));
                 p.y = GroundY - r * 0.35f;
-                if (!map.IsClear(p, r * 0.9f)) return;
+                if (!map.IsClear(p, r * 0.9f) || InRiver(p, r)) return;
                 float h = RandRange(0.7f, 1.2f);
                 if (Any(mountainModels))
                 {
@@ -1363,21 +1741,21 @@ namespace JunkRace
             {
                 Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + RandRange(3f, 9f));
                 p.y = GroundY;
-                if (map.IsClear(p, 2f)) Pine(p, true);
+                if (map.IsClear(p, 2f) && !InRiver(p, 2f)) Pine(p, true);
             }
             for (int i = 0; i < 2; i++)
                 if (rng.NextDouble() < 0.6)
                 {
                     Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + RandRange(10f, 45f)) + s.Forward * RandRange(-2.5f, 2.5f);
                     p.y = GroundY;
-                    if (map.IsClear(p, 2.5f)) Pine(p, true);
+                    if (map.IsClear(p, 2.5f) && !InRiver(p, 2.5f)) Pine(p, true);
                 }
             // Сугробы у обочины (без коллайдера — просто вид).
             if (rng.NextDouble() < 0.3)
             {
                 Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + RandRange(1f, 10f)) + s.Forward * RandRange(-2f, 2f);
                 float r = RandRange(1f, 2.5f);
-                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r))
+                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r) && !InRiver(p, r))
                     Piece("Сугроб", sphere, new Vector3(p.x, GroundY, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
                           new Vector3(r * 2f, r * RandRange(0.5f, 0.8f), r * RandRange(1.2f, 1.8f)), SnowWhite, Col.None, Decor.Small);
             }
@@ -1388,7 +1766,7 @@ namespace JunkRace
             {
                 float r = RandRange(12f, 22f);
                 Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r + RandRange(12f, 35f));
-                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f))
+                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f) && !InRiver(p, r))
                 {
                     float h = RandRange(0.8f, 1.3f);
                     Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f - r * 0.15f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
@@ -1399,7 +1777,7 @@ namespace JunkRace
             {
                 float r = RandRange(25f, 45f);
                 Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 0.8f + RandRange(20f, 60f));
-                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f))
+                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f) && !InRiver(p, r))
                 {
                     float h = RandRange(1f, 1.5f);
                     Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f - r * 0.15f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
