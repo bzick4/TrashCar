@@ -167,6 +167,7 @@ namespace JunkRace
             YardShuffle.Apply(seed, transform.position, Players);
             YardReady = true;
             DayNightCycle.Begin(seed);   // сутки идут с этого момента: час старта и восток — по сиду
+            TestCarBuilder.Begin();      // тестовая трасса: машину соберёт сама
 
             // Холмы-задник вокруг свалки (после постройки трассы перестроятся вокруг неё).
             if (BackdropHills.Instance != null)
@@ -269,7 +270,7 @@ namespace JunkRace
             var order = new List<Biome> { Biome.Forest, Biome.Mountains, Biome.Snow };
             Shuffle(order);
             test = TestRoute;
-            if (test) { sections = 3; order = new List<Biome> { Biome.Snow, Biome.Mountains, Biome.Forest }; }
+            if (test) { sections = 3; order = new List<Biome> { Biome.Forest, Biome.Snow, Biome.Mountains }; }   // сперва вода: брод, мост, потом тоннель
             else if (sections > 3)
             {
                 var b4 = (Biome)rng.Next(3);
@@ -334,7 +335,7 @@ namespace JunkRace
         {
             riverInSection = false;
             Run(main, 20f, RandRange(-35f, 35f), -Mathf.Min(pos.y, 1f), ForestWidth);
-            if (test) { ForestRoadChunk(); RiverCrossing(ForestWidth); ForestSweep(); return; }   // тестовая: река
+            if (test) { RiverCrossing(ForestWidth, 2); ForestSweep(); return; }   // тестовая: сразу река вброд
             int forkAt = fork ? rng.Next(0, chunks + 1) : -1;
             for (int i = 0; i < chunks; i++)
             {
@@ -358,16 +359,15 @@ namespace JunkRace
         {
             riverInSection = false;
             Run(main, 20f, RandRange(-35f, 35f), 0f, MountainWidth);
-            // В горы — сначала вверх: развилке с прыжком нужна высота, иначе падать некуда.
-            MountainClimb();
             if (test)
             {
-                // Тестовая: ущелье с тоннелем, потом развилка «тоннель вниз / перевал вверх».
+                // Тестовая: сразу ущелье с тоннелем, потом развилка «тоннель вниз / перевал вверх».
                 MountainCanyon();
                 MountainTunnelFork(true);
-                while (pos.y > 3f) Run(main, 60f, RandRange(-20f, 20f), -Mathf.Min(pos.y - 1f, RandRange(8f, 12f)));
                 return;
             }
+            // В горы — сначала вверх: развилке с прыжком нужна высота, иначе падать некуда.
+            MountainClimb();
             if (rng.Next(2) == 0) MountainClimb();
             int forkAt = fork ? rng.Next(0, chunks) : -1;
             for (int i = 0; i < chunks; i++)
@@ -445,6 +445,9 @@ namespace JunkRace
 
         readonly List<River> rivers = new List<River>();
         const float RiverBank = 9f;   // ширина пологого пляжа от кромки воды до травы, м
+        const float RiverCell = 9f;   // «клетка» ширины реки (≈ ширина дороги), м
+        const float BridgeArch = 1.4f;   // горб моста посередине, м
+        const float BridgeDeck = 0.45f;  // толщина настила, м
         bool riverInSection;
 
         /// <summary>Можно ли на этом участке реку: не больше одной на участок и двух на трассу.</summary>
@@ -454,19 +457,38 @@ namespace JunkRace
         /// Река поперёк дороги (в любом биоме): спуск к воде, брод, подъём на другой берег.
         /// В горах дорога высоко — сначала спускаемся к равнине серпантином, а не обрывом.
         /// </summary>
-        void RiverCrossing(float width)
+        void RiverCrossing(float width, int forceCells = 0)
         {
             riverInSection = true;
             while (pos.y > 3f) Run(main, 40f, RandRange(-12f, 12f), -Mathf.Min(pos.y - 1f, 8f), width);
             if (pos.y > 0.3f) Run(main, 16f, 0f, -pos.y, width);
             Run(main, 14f, -yaw * 0.7f, 0f, width);   // почти поперёк реки
-            float z0 = pos.z, x0 = pos.x;
-            Run(main, 10f, 0f, FordY - pos.y, width + 1f, FordY);
-            Run(main, RandRange(14f, 24f), RandRange(-8f, 8f), 0f, width + 1f, FordY);
-            Run(main, 10f, 0f, -FordY, width, FordY);
-            float z1 = pos.z, x1 = pos.x;
-            // Кромка воды — там, где дорога уже ниже воды (~3 м от начала спуска).
-            float w0 = z0 + 3f, w1 = z1 - 3f;
+            // Ширина воды — от 1 до 4 клеток (клетка ≈ ширина дороги). Узкую переходим вброд, широкую — по мосту.
+            int cells = forceCells > 0 ? forceCells : 1 + rng.Next(4);
+            float waterW = cells * RiverCell;
+            float z0 = pos.z, x0 = pos.x, w0, w1;
+            if (cells < 3)
+            {
+                // Брод: спуск, ровное дно, подъём. Дорога уходит под воду примерно на трети спуска.
+                float L = Mathf.Clamp(waterW * 0.55f, 6f, 10f), edge = 0.33f * L;
+                float flat = Mathf.Max(2f, waterW - 2f * (L - edge));
+                Run(main, L, 0f, FordY - pos.y, width + 1f, FordY);
+                Run(main, flat, RandRange(-4f, 4f), 0f, width + 1f, FordY);
+                Run(main, L, 0f, -FordY, width, FordY);
+                w0 = z0 + edge; w1 = pos.z - edge;
+            }
+            else
+            {
+                // Мост: с берега на берег над водой, с небольшим горбом посередине.
+                const float pad = 5f;   // на пляже по краям
+                float span = waterW + 2f * pad;
+                bridgeMode = true;
+                Run(main, span / 2f, 0f, BridgeArch, width);
+                Run(main, span / 2f, 0f, -BridgeArch, width);
+                bridgeMode = false;
+                w0 = z0 + pad; w1 = pos.z - pad;
+            }
+            float x1 = pos.x;
             rivers.Add(new River
             {
                 Zc = (w0 + w1) / 2f, HalfW = (w1 - w0) / 2f, RoadX = (x0 + x1) / 2f,
@@ -684,7 +706,8 @@ namespace JunkRace
             if (test)
             {
                 Run(main, 20f, RandRange(-30f, 30f), -Mathf.Min(pos.y, 2f), SnowWidth);
-                SnowRoadChunk(); SnowDrifts();
+                RiverCrossing(SnowWidth, 4);   // тестовая: широкая река — по мосту
+                SnowDrifts();
                 Run(main, 12f, 0f, -pos.y, SnowWidth);
                 return;
             }
@@ -802,8 +825,11 @@ namespace JunkRace
                 HalfWidth = width / 2f,
                 Road = road,
                 Biome = biome,
+                Bridge = bridgeMode,
             });
         }
+
+        bool bridgeMode;   // точки, которые сейчас кладём, — мост
 
         /// <summary>
         /// Проехать length метров: повернуть на turn градусов (плавной дугой), подняться на rise
@@ -990,7 +1016,9 @@ namespace JunkRace
             var verts = new List<Vector3>();
             var uvs = new List<Vector2>();
             int transCount = roadTransitions != null ? roadTransitions.Length : 0;
-            var subs = new List<int>[RoadSubs + transCount];   // [биом*2 + 0] верх, [биом*2 + 1] откосы, дальше — переходы
+            // [биом*2 + 0] верх, [биом*2 + 1] откосы, дальше — переходы, настил моста (дерево), брод под водой (по биому).
+            int bridgeSub = RoadSubs + transCount, fordSub = bridgeSub + 1;
+            var subs = new List<int>[fordSub + 3];
             for (int i = 0; i < subs.Length; i++) subs[i] = new List<int>();
 
             // Стыки биомов на этом пути: участок длиной в ширину дороги (картинка не растянута) — картинкой-переходом.
@@ -1033,6 +1061,20 @@ namespace JunkRace
                     v0 = j.flip ? t0 : 1f - t0;
                     v1 = j.flip ? t1 : 1f - t1;
                     break;
+                }
+
+                // Брод под водой — не «дорога», а отмель: текстура берега, сквозь воду колея не видна.
+                bool ford = UnderWater(a.Pos) && UnderWater(b.Pos);
+                if (ford) { topSub = fordSub + (int)a.Biome; sideSub = topSub; }
+                // Мост: тонкий настил (дерево по бокам и снизу), под ним течёт вода.
+                bool bridge = a.Bridge && b.Bridge;
+                if (bridge)
+                {
+                    ab = a.Pos.y - BridgeDeck; bb = b.Pos.y - BridgeDeck;
+                    aLb = new Vector3(aL.x, ab, aL.z); aRb = new Vector3(aR.x, ab, aR.z);
+                    bLb = new Vector3(bL.x, bb, bL.z); bRb = new Vector3(bR.x, bb, bR.z);
+                    sideSub = bridgeSub;
+                    Quad(verts, uvs, subs[bridgeSub], aLb, aRb, bRb, bLb, new Vector2(0f, v0), new Vector2(1f, v0), new Vector2(1f, v1), new Vector2(0f, v1));   // низ
                 }
 
                 if (a.Road && b.Road)
@@ -1083,6 +1125,8 @@ namespace JunkRace
                 roadSnow ? roadSnow : Mat(SnowRoad), sideSnow ? sideSnow : Mat(SnowSide),
             };
             if (roadTransitions != null) foreach (var t in roadTransitions) mats.Add(t.Material);
+            mats.Add(Mat(PortalWood));   // настил моста
+            for (int k = 0; k < 3; k++) mats.Add(BankMaterial((Biome)k, false));   // брод под водой
             if (mats.Count > subs.Length) mats.RemoveRange(subs.Length, mats.Count - subs.Length);
             go.AddComponent<MeshRenderer>().sharedMaterials = mats.ToArray();
             go.AddComponent<MeshCollider>().sharedMesh = mesh;
@@ -1274,19 +1318,8 @@ namespace JunkRace
             var grass = GroundMaterial(biomeHere);
             if (grass != null) grass = Tiled(grass, Vector2.one);   // UV рельефа — уже в плитках по 10 м
             else grass = Mat(Grass);
-            // Берега: в лесу — песок, в горах — горный грунт с камешками, в снегу — снег.
-            Material bankSrc = biomeHere == Biome.Snow ? groundSnow : biomeHere == Biome.Mountains ? groundMountain : groundSand;
-            Color bankColor = biomeHere == Biome.Snow ? SnowWhite : biomeHere == Biome.Mountains ? MountainGround : SandColor;
-            // Мокрая полоса у воды: темнее; снег — в голубизну (подтаявший, с ледком).
-            Color wetTint = biomeHere == Biome.Snow ? new Color(0.78f, 0.86f, 0.98f, 1f) : new Color(0.7f, 0.68f, 0.66f, 1f);
-            var sand = bankSrc != null ? Tiled(bankSrc, Vector2.one) : Mat(bankColor);
-            Material wet;
-            if (bankSrc != null)
-            {
-                wet = new Material(sand) { name = bankSrc.name + " мокрый" };
-                wet.color = bankSrc.color * wetTint;
-            }
-            else wet = Mat(bankColor * wetTint);
+            var sand = BankMaterial(biomeHere, false);
+            var wet = BankMaterial(biomeHere, true);
 
             var go = new GameObject("Река_берега");
             go.transform.SetParent(root, false);
@@ -1559,6 +1592,32 @@ namespace JunkRace
                   new Vector3(s.HalfWidth * 2f + 2.2f, 0.6f, 0.7f), PortalWood, Col.Box);
         }
 
+        readonly Dictionary<(Biome, bool), Material> bankMats = new Dictionary<(Biome, bool), Material>();
+
+        /// <summary>
+        /// Берег реки по биому: в лесу — песок, в горах — горный грунт с камешками, в снегу — снег.
+        /// wet — мокрая полоса у воды: темнее; снег — в голубизну (подтаявший, с ледком). Им же — брод под водой.
+        /// </summary>
+        Material BankMaterial(Biome biome, bool wet)
+        {
+            if (bankMats.TryGetValue((biome, wet), out var m) && m != null) return m;
+            Material src = biome == Biome.Snow ? groundSnow : biome == Biome.Mountains ? groundMountain : groundSand;
+            Color color = biome == Biome.Snow ? SnowWhite : biome == Biome.Mountains ? MountainGround : SandColor;
+            Color wetTint = biome == Biome.Snow ? new Color(0.78f, 0.86f, 0.98f, 1f) : new Color(0.7f, 0.68f, 0.66f, 1f);
+            if (src != null)
+            {
+                m = Tiled(src, Vector2.one);
+                if (wet)
+                {
+                    m = new Material(m) { name = src.name + " мокрый" };
+                    m.color = src.color * wetTint;
+                }
+            }
+            else m = Mat(wet ? color * wetTint : color);
+            bankMats[(biome, wet)] = m;
+            return m;
+        }
+
         static Material waterMaterial, icyWater;
         static bool waterMaterialLoaded;
 
@@ -1723,12 +1782,13 @@ namespace JunkRace
             foreach (var path in map.Paths)
             {
                 if (!path.BuildMesh) continue;
+                BridgeDecor(path);
                 // Мусор прямо на дороге: бочки, покрышки, мешки кучкой — объезжай или тарань.
                 if (Any(junkModels))
                     for (float d = 40f; d < path.Length - 10f; d += RandRange(25f, 55f))
                     {
                         var s = path.At(d);
-                        if (!s.Road || UnderWater(s.Pos) || rng.NextDouble() > 0.5) continue;
+                        if (!s.Road || s.Bridge || UnderWater(s.Pos) || rng.NextDouble() > 0.5) continue;
                         int n = rng.Next(1, 4);
                         float lat = RandRange(-(s.HalfWidth - 1.5f), s.HalfWidth - 1.5f);
                         for (int i = 0; i < n; i++)
@@ -1742,7 +1802,7 @@ namespace JunkRace
                 for (float d = 4f; d < path.Length; d += 12f)
                 {
                     var s = path.At(d);
-                    if (!s.Road || UnderWater(s.Pos)) continue;   // у брода столбики под водой ни к чему
+                    if (!s.Road || s.Bridge || UnderWater(s.Pos)) continue;   // у брода столбики под водой ни к чему, у моста — перила
                     for (int k = -1; k <= 1; k += 2)
                     {
                         Vector3 p = s.Pos + s.Right * k * (s.HalfWidth + 0.4f);
@@ -1978,6 +2038,52 @@ namespace JunkRace
                     float h = RandRange(1f, 1.5f);
                     Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
                           new Vector3(r * 2f, r * 1.6f * h, r * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Мост: перила с обеих сторон (столбики и брус, твёрдые — с моста не слететь) и опоры до дна реки.
+        /// </summary>
+        void BridgeDecor(RoutePath path)
+        {
+            var sm = path.Samples;
+            int i = 0;
+            while (i < sm.Count)
+            {
+                if (!sm[i].Bridge) { i++; continue; }
+                int start = i;
+                while (i < sm.Count && sm[i].Bridge) i++;
+                float d0 = path.Dist[Mathf.Max(0, start - 1)], d1 = path.Dist[i - 1];
+                // Перила: столбики через 2 м, между ними брус.
+                for (int k = -1; k <= 1; k += 2)
+                {
+                    RouteSample prev = default;
+                    bool has = false;
+                    for (float d = d0; d <= d1 + 0.01f; d += 2f)
+                    {
+                        var s = path.At(Mathf.Min(d, d1));
+                        Vector3 p = s.Pos + s.Right * k * (s.HalfWidth - 0.1f);
+                        Piece("Мост_столбик", cube, p + Vector3.up * 0.5f, Quaternion.LookRotation(s.Forward), new Vector3(0.18f, 1f, 0.18f), PortalWood, Col.Box);
+                        if (has)
+                        {
+                            Vector3 q = prev.Pos + prev.Right * k * (prev.HalfWidth - 0.1f);
+                            Vector3 mid = (p + q) * 0.5f + Vector3.up * 0.95f;
+                            Vector3 dir = p - q;
+                            if (dir.sqrMagnitude > 0.01f)
+                                Piece("Мост_перила", cube, mid, Quaternion.LookRotation(dir), new Vector3(0.14f, 0.14f, dir.magnitude + 0.1f), PortalWood, Col.Box);
+                        }
+                        prev = s; has = true;
+                    }
+                }
+                // Опоры: пары столбов до дна через ~7 м.
+                for (float d = d0 + 3f; d < d1 - 2f; d += 7f)
+                {
+                    var s = path.At(d);
+                    float top = s.Pos.y - BridgeDeck, h = top - RiverBedY;
+                    for (int k = -1; k <= 1; k += 2)
+                        Piece("Мост_опора", cube, s.Pos + s.Right * k * (s.HalfWidth - 0.8f) + Vector3.up * (top - s.Pos.y - h / 2f),
+                              Quaternion.LookRotation(s.Forward), new Vector3(0.7f, h, 0.7f), new Color(PortalWood.r * 0.85f, PortalWood.g * 0.85f, PortalWood.b * 0.85f), Col.Box);
                 }
             }
         }

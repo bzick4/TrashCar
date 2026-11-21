@@ -13,6 +13,7 @@ namespace JunkRace
         public float HalfWidth;
         public bool Road;         // false — дороги нет (пропасть, которую надо перепрыгнуть)
         public Biome Biome;
+        public bool Bridge;       // мост над рекой: тонкий настил, перила, опоры
 
         public Vector3 Right => new Vector3(Forward.z, 0f, -Forward.x);
     }
@@ -100,6 +101,7 @@ namespace JunkRace
                 HalfWidth = Mathf.Lerp(a.HalfWidth, b.HalfWidth, t),
                 Road = a.Road && b.Road,
                 Biome = t < 0.5f ? a.Biome : b.Biome,
+                Bridge = a.Bridge && b.Bridge,
             };
         }
     }
