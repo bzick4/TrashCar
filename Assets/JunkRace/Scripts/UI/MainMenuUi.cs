@@ -67,6 +67,12 @@ namespace JunkRace
 
         void Start()
         {
+            // Первый запуск игры — сразу на свалку, в обучение (пройдено или пропущено — больше не начинается).
+            if (!GameSession.TutorialDone && string.IsNullOrEmpty(GameSession.PendingMessage))
+            {
+                GameSession.StartTutorial();
+                return;
+            }
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
             Time.timeScale = 1f;
@@ -122,6 +128,7 @@ namespace JunkRace
 
         void Update()
         {
+            if (canvas == null) return;   // первый запуск: Start сразу ушёл в обучение, меню не строилось
             if (Session != null)
             {
                 switch (Session.Current)
@@ -253,6 +260,8 @@ namespace JunkRace
                 if (fx != null && fx.Available) fx.LaunchWheel(GameSession.StartSolo);
                 else GameSession.StartSolo();
             }, bw);
+            Ui.Space(area, 8f);
+            Ui.Button(area, "Обучение", null, Ui.Big, () => { if (!Busy()) GameSession.StartTutorial(); }, bw);
             Ui.Space(area, 8f);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // Только для разработки: в обычной сборке игры кнопки нет.

@@ -109,8 +109,8 @@ namespace JunkRace
         public PlayerPartInput(GameControls controls) => this.controls = controls;
 
         // Меню открыто (в коопе мир идёт) — машину не ведём.
-        public float Throttle => InGameMenu.IsOpen ? 0f : controls.Throttle.ReadValue<float>();
-        public float Steer => InGameMenu.IsOpen ? 0f : controls.Steer.ReadValue<float>();
-        public bool Special => !InGameMenu.IsOpen && controls.Special.IsPressed();
+        public float Throttle => InGameMenu.Blocked ? 0f : controls.Throttle.ReadValue<float>();
+        public float Steer => InGameMenu.Blocked ? 0f : controls.Steer.ReadValue<float>();
+        public bool Special => !InGameMenu.Blocked && controls.Special.IsPressed();
     }
 }

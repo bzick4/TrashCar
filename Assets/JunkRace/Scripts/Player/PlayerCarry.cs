@@ -163,7 +163,7 @@ namespace JunkRace
 
         void Update()
         {
-            if (InGameMenu.IsOpen || RaceTimer.IsLoading) return;
+            if (InGameMenu.Blocked || RaceTimer.IsLoading) return;
             if (player.InVehicle || RaceTimer.InteractionLocked)
             {
                 if (searchPile != null && !waitingResult) CancelSearch(null);
@@ -229,7 +229,7 @@ namespace JunkRace
             foreach (var col in Physics.OverlapSphere(holdPoint.position, grabRadius, ~0, QueryTriggerInteraction.Ignore))
             {
                 var part = col.GetComponentInParent<Part>();
-                if (part == null || !part.CanBeCarried) continue;
+                if (part == null || !part.CanBeCarried || !Tutorial.AllowGrab(part)) continue;
                 float d = Vector3.Distance(holdPoint.position, col.ClosestPoint(holdPoint.position));
                 if (IsHull(part)) { if (d < hullDist) { hullDist = d; bestHull = part; } }
                 else if (d < partDist) { partDist = d; bestPart = part; }
@@ -252,7 +252,7 @@ namespace JunkRace
                     var h = lookHits[i];
                     if (h.collider == null || h.distance >= bestDist) continue;
                     var pile = h.collider.GetComponentInParent<JunkPile>();
-                    if (pile == null || !pile.InReach(transform.position)) continue;
+                    if (pile == null || !pile.InReach(transform.position) || !Tutorial.AllowSearch(pile)) continue;
                     best = pile;
                     bestDist = h.distance;
                 }
@@ -263,7 +263,7 @@ namespace JunkRace
             float nearestSq = float.MaxValue;
             foreach (var pile in JunkPile.All)
             {
-                if (pile == null || !pile.InReach(transform.position)) continue;
+                if (pile == null || !pile.InReach(transform.position) || !Tutorial.AllowSearch(pile)) continue;
                 float d = (pile.transform.position - transform.position).sqrMagnitude;
                 if (d < nearestSq) { nearestSq = d; nearest = pile; }
             }
@@ -343,7 +343,7 @@ namespace JunkRace
                 var h = lookHits[i];
                 if (h.collider == null) continue;
                 var part = h.collider.GetComponentInParent<Part>();
-                if (part == null || !part.CanBeCarried) continue;
+                if (part == null || !part.CanBeCarried || !Tutorial.AllowGrab(part)) continue;
                 if (IsHull(part)) { if (h.distance < hullDist) { hullDist = h.distance; bestHull = part; } }
                 else if (h.distance < partDist) { partDist = h.distance; bestPart = part; }
             }
@@ -377,7 +377,7 @@ namespace JunkRace
                 if (v == null || v == Held.Vehicle) continue;   // свои же точки (если несём корпус)
                 if (!v.MayUse(World.LocalId)) continue;          // чужая машина — её строит другой
                 if ((p.transform.position - me).sqrMagnitude > r2) continue;
-                if (!v.CanAttach(Held, p)) continue;
+                if (!v.CanAttach(Held, p) || !Tutorial.AllowAttach(Held, p)) continue;
                 shownPoints.Add(p);
             }
             // Подсвечиваем только места, где деталь работает. Alt — все (прикрутить как груз).

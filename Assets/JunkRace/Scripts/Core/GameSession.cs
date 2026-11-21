@@ -52,10 +52,30 @@ namespace JunkRace
             }
         }
 
+        /// <summary>Обучение: одиночная игра по шагам (Tutorial), без таймера сборки и с короткой трассой.</summary>
+        public static bool Tutorial;
+        public static bool IsTutorial => Tutorial && Mode == GameMode.Solo;
+
+        /// <summary>Обучение пройдено или пропущено — при запуске игры больше не начинается само.</summary>
+        public static bool TutorialDone
+        {
+            get => PlayerPrefs.GetInt("jr_tutorial_done", 0) == 1;
+            set { PlayerPrefs.SetInt("jr_tutorial_done", value ? 1 : 0); PlayerPrefs.Save(); }
+        }
+
+        public static void StartTutorial()
+        {
+            Mode = GameMode.Solo;
+            DevRoom = false;
+            Tutorial = true;
+            SceneManager.LoadScene(TrackScene);
+        }
+
         public static void StartSolo()
         {
             Mode = GameMode.Solo;
             DevRoom = false;
+            Tutorial = false;
             SceneManager.LoadScene(TrackScene);
         }
 
@@ -64,6 +84,7 @@ namespace JunkRace
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             Mode = GameMode.Solo;
             DevRoom = true;
+            Tutorial = false;
             SceneManager.LoadScene(TrackScene);
 #endif
         }
@@ -98,6 +119,7 @@ namespace JunkRace
         {
             PendingMessage = message;
             DevRoom = false;
+            Tutorial = false;
             Time.timeScale = 1f;
 
             var nm = NetworkManager.Singleton;

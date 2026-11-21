@@ -13,6 +13,9 @@ namespace JunkRace
     {
         public static bool IsOpen { get; private set; }
 
+        /// <summary>Управление игроком выключено: открыто меню или окно обучения.</summary>
+        public static bool Blocked => IsOpen || Tutorial.ModalOpen;
+
         void Start() => SetOpen(false);
 
         void OnDestroy()
@@ -33,8 +36,9 @@ namespace JunkRace
         {
             IsOpen = open;
             if (!open) soundPage = false;
-            Cursor.lockState = open ? CursorLockMode.None : CursorLockMode.Locked;
-            Cursor.visible = open;
+            bool free = open || Tutorial.ModalOpen;   // под меню могло быть окно обучения — ему нужна мышь
+            Cursor.lockState = free ? CursorLockMode.None : CursorLockMode.Locked;
+            Cursor.visible = free;
             // В коопе мир не останавливаем: другие игроки продолжают.
             if (GameSession.Mode == GameMode.Solo) Time.timeScale = open ? 0f : 1f;
         }
@@ -110,7 +114,12 @@ namespace JunkRace
             Ui.Space(content, 20f);
             Ui.Button(content, "Продолжить", null, Ui.Big, () => SetOpen(false));
             Ui.Space(content, 12f);
-            if (GameSession.CanRestart)
+            if (GameSession.IsTutorial)
+            {
+                Ui.Button(content, "Пропустить обучение", null, Ui.Big, Tutorial.Skip);
+                Ui.Space(content, 12f);
+            }
+            else if (GameSession.CanRestart)
             {
                 Ui.Button(content, GameSession.Mode == GameMode.Solo ? "Заново" : "Заново (у всех)", null, Ui.Big, GameSession.RestartTrack);
                 Ui.Space(content, 12f);

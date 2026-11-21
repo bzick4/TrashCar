@@ -168,6 +168,7 @@ namespace JunkRace
             YardReady = true;
             DayNightCycle.Begin(seed);   // сутки идут с этого момента: час старта и восток — по сиду
             TestCarBuilder.Begin();      // тестовая трасса: машину соберёт сама
+            Tutorial.Begin();            // обучение: шаги и раскладка деталей под них
 
             // Холмы-задник вокруг свалки (после постройки трассы перестроятся вокруг неё).
             if (BackdropHills.Instance != null)
@@ -270,7 +271,9 @@ namespace JunkRace
             var order = new List<Biome> { Biome.Forest, Biome.Mountains, Biome.Snow };
             Shuffle(order);
             test = TestRoute;
-            if (test) { sections = 3; order = new List<Biome> { Biome.Forest, Biome.Snow, Biome.Mountains }; }   // сперва вода: брод, мост, потом тоннель
+            bool tutorial = GameSession.IsTutorial;
+            if (tutorial) { sections = 1; order = new List<Biome> { Biome.Forest }; test = false; }   // обучение: короткий лес
+            else if (test) { sections = 3; order = new List<Biome> { Biome.Forest, Biome.Snow, Biome.Mountains }; }   // сперва вода: брод, мост, потом тоннель
             else if (sections > 3)
             {
                 var b4 = (Biome)rng.Next(3);
@@ -288,6 +291,7 @@ namespace JunkRace
                 SectionBiomes.Add(b);
                 bool fork = forks == 0 && i == sections - 1 || rng.NextDouble() < 0.6;   // хотя бы одна развилка
                 int chunks = 2 + rng.Next(2);
+                if (tutorial) { TutorialForest(); continue; }
                 switch (b)
                 {
                     case Biome.Forest: BuildForest(chunks, fork); break;
@@ -385,6 +389,24 @@ namespace JunkRace
             }
             // Спуск к равнине.
             while (pos.y > 3f) Run(main, 60f, RandRange(-20f, 20f), -Mathf.Min(pos.y - 1f, RandRange(8f, 12f)));
+        }
+
+        /// <summary>
+        /// Трасса обучения: один лес без рек и развилок, ~750 м — на собранной из хлама машине
+        /// это 1,5–2 минуты. Куски — все лесные по разу, чтобы попробовать и слалом, и брёвна, и горки.
+        /// </summary>
+        void TutorialForest()
+        {
+            riverInSection = true;   // без рек
+            Run(main, 20f, RandRange(-20f, 20f), -Mathf.Min(pos.y, 1f), ForestWidth);
+            ForestRoadChunk();
+            ForestSweep();
+            ForestSlalom();
+            ForestRoadChunk();
+            ForestLogs();
+            ForestSweep();
+            ForestHills();
+            ForestRoadChunk();
         }
 
         // ---------------- Куски леса ----------------

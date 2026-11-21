@@ -38,7 +38,7 @@ namespace JunkRace
             {
                 int n = 0;
                 foreach (var p in stash) if (p != null && p.IsHidden && p.gameObject.activeSelf) n++;
-                return n;
+                return Mathf.Max(n, ForcedRolls.Count > 0 ? 1 : 0);   // обучение: «ничего» — ещё не «пусто»
             }
         }
 
@@ -74,6 +74,15 @@ namespace JunkRace
             part.Hide(ParkPosition);
         }
 
+        /// <summary>Убрать деталь из тайника этой кучи (её перепрятали в другую).</summary>
+        public void Unstash(Part part) => stash.Remove(part);
+
+        /// <summary>
+        /// Обучение: заранее решённые итоги поисков по порядку (null — «ничего»). Пока очередь не пуста,
+        /// Roll берёт из неё, а не бросает кубик.
+        /// </summary>
+        public readonly Queue<Part> ForcedRolls = new Queue<Part>();
+
         /// <summary>Перед новой раскладкой: то, что положил сборщик сцены, не в счёт.</summary>
         public void ClearStash() => stash.Clear();
 
@@ -98,6 +107,11 @@ namespace JunkRace
         /// <summary>Хост: что нашли за этот поиск (null — ничего).</summary>
         public Part Roll()
         {
+            if (ForcedRolls.Count > 0)
+            {
+                var forced = ForcedRolls.Dequeue();
+                return forced != null && forced.IsHidden ? forced : null;
+            }
             candidates.Clear();
             foreach (var p in stash) if (p != null && p.IsHidden && p.gameObject.activeSelf) candidates.Add(p);
             if (candidates.Count == 0 || Random.value > findChance) return null;

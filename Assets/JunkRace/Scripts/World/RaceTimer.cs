@@ -163,7 +163,7 @@ namespace JunkRace
 
         void Update()
         {
-            if (Phase == MatchPhase.Results && GameSession.CanRestart && !InGameMenu.IsOpen)
+            if (Phase == MatchPhase.Results && GameSession.CanRestart && !InGameMenu.Blocked && !GameSession.IsTutorial)
             {
                 bool again = (Keyboard.current != null && (Keyboard.current.enterKey.wasPressedThisFrame || Keyboard.current.numpadEnterKey.wasPressedThisFrame))
                              || (Gamepad.current != null && Gamepad.current.buttonEast.wasPressedThisFrame);
@@ -189,7 +189,7 @@ namespace JunkRace
                 }
                 case MatchPhase.Build:
                     // Старт — когда все нажали «Готов» (G) или кончилось время. Просто сесть в машину — не старт.
-                    if (AllBuildReady() || (Remaining <= 0f && !GameSession.IsDevRoom)) EnterRaceLoading();
+                    if (AllBuildReady() || (Remaining <= 0f && !GameSession.IsDevRoom && !GameSession.IsTutorial)) EnterRaceLoading();
                     break;
                 case MatchPhase.RaceLoading:
                 {
@@ -436,7 +436,7 @@ namespace JunkRace
                     break;
                 }
                 case MatchPhase.Results:
-                    DrawResults();
+                    if (!GameSession.IsTutorial) DrawResults();   // в обучении итоги — в окне Tutorial
                     break;
             }
         }
@@ -526,7 +526,7 @@ namespace JunkRace
         {
             float t = Remaining;
             ulong me = World.LocalId;
-            bool dev = GameSession.IsDevRoom;
+            bool dev = GameSession.IsDevRoom || GameSession.IsTutorial;   // без таймера
             string hint = dev ? "Все детали разложены рядами. Собери машину и нажми G — поехать на трассу"
                 : buildReady.Contains(me) ? "Ты готов. Ждём остальных (G — отменить)"
                 : "Собери машину и нажми G — «Готов». Когда готовы все — старт";
@@ -546,13 +546,13 @@ namespace JunkRace
             var sign = new Rect((w - sw) / 2f, -14f * k, sw, sh);
             paint.Tex(sign, timerSign);
             var signIn = Inner(sign, SignInner);
-            if (dev) paint.Label(signIn, "ТЕСТ", StyleSign.With(Mathf.RoundToInt(24f * k)));
+            if (dev) paint.Label(signIn, GameSession.IsTutorial ? "УЧЁБА" : "ТЕСТ", StyleSign.With(Mathf.RoundToInt(24f * k)));
             else DrawDigits($"{(int)(t / 60)}:{(int)(t % 60):00}", signIn, signIn.height * 0.86f);
 
             // Маленькая плашка под таймером — только пока машины ещё нет (меньше двух деталей).
             // Появление и исчезновение — DOTween (выпрыгивает с перелётом, уходит сжимаясь).
             var mine = VehicleOf(me);
-            bool need = mine == null || mine.PartCount < 2;
+            bool need = !GameSession.IsTutorial && (mine == null || mine.PartCount < 2);   // в обучении подсказывает Tutorial
             if (need) warnMsg = mine == null ? "Нет машины: возьми корпус" : "Прикрути к корпусу первую деталь";
             if (need != warnTarget)
             {

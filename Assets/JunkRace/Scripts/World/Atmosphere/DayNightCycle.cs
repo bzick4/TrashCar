@@ -61,6 +61,7 @@ namespace JunkRace
             var c = go.AddComponent<DayNightCycle>();
             var rng = new System.Random(seed * 31 + 7);
             c.startHour = 7f + (float)rng.NextDouble() * 10f;       // старт днём: с 7 до 17 часов
+            if (GameSession.IsTutorial) c.startHour = 10f;           // обучение — ясное утро
             c.azimuth = (float)rng.NextDouble() * 360f;              // где у этой трассы восток
             c.localStart = Time.time;
         }

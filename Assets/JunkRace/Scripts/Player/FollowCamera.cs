@@ -68,7 +68,7 @@ namespace JunkRace
             // Модель человечка ставится позже камеры — раз в полсекунды пересобираем список своих рендеров.
             rescanTimer -= Time.deltaTime;
             if (rescanTimer <= 0f) { rescanTimer = 0.5f; ApplyMode(true); }
-            if (InGameMenu.IsOpen) { PlaceCamera(); return; }
+            if (InGameMenu.Blocked) { PlaceCamera(); return; }
 
             if (player.Controls.ToggleView.WasPressedThisFrame())
             {

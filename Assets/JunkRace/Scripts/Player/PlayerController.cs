@@ -80,14 +80,14 @@ namespace JunkRace
                 return;
             }
             // G — «Готов» на сборке (и пешком, и за рулём).
-            if (!InGameMenu.IsOpen && Controls.Ready.WasPressedThisFrame()
+            if (!InGameMenu.Blocked && Controls.Ready.WasPressedThisFrame() && Tutorial.AllowReady
                 && RaceTimer.Instance != null && RaceTimer.Instance.Phase == MatchPhase.Build)
                 World.RequestBuildReady(!RaceTimer.Instance.IsBuildReady(World.LocalId));
 
-            if (InGameMenu.IsOpen)
+            if (InGameMenu.Blocked)
             {
                 // Кооп: мир идёт — стоим на месте, но падаем, если были в прыжке.
-                if (!InVehicle && GameSession.Mode != GameMode.Solo) Move(false);
+                if (!InVehicle && (GameSession.Mode != GameMode.Solo || !InGameMenu.IsOpen)) Move(false);
                 return;
             }
 
@@ -103,7 +103,7 @@ namespace JunkRace
             Move();
             CheckFootFall();
             if (RaceTimer.InteractionLocked) return;   // ждём остальных: бегать можно, садиться и вертеть — нет
-            if (Controls.Enter.WasPressedThisFrame()) TryEnterVehicle();
+            if (Controls.Enter.WasPressedThisFrame() && Tutorial.AllowEnter) TryEnterVehicle();
             if (Controls.Rotate.WasPressedThisFrame())
             {
                 // R: перевернуть корпус (в руках или под прицелом) — стол ножками вверх или вниз.

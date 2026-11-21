@@ -14,7 +14,7 @@ namespace JunkRace
     {
         public static void Begin()
         {
-            if (!RouteGenerator.TestRoute || GameSession.Mode != GameMode.Solo || GameSession.IsDevRoom) return;
+            if (!RouteGenerator.TestRoute || GameSession.Mode != GameMode.Solo || GameSession.IsDevRoom || GameSession.IsTutorial) return;
             if (FindFirstObjectByType<TestCarBuilder>() != null) return;
             new GameObject("Тестовая машина").AddComponent<TestCarBuilder>();
         }
