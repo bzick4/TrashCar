@@ -354,7 +354,7 @@ namespace JunkRace
         {
             if (driving != null)
                 hintPaint.Label(new Rect(20, Screen.height - 40, 1100, 30),
-                    "W/S — газ   A/D — руль   Space — спец   R — сброс на дорогу   F — выйти   V — вид"
+                    "W/S или ↑/↓ — газ   A/D или ←/→ — руль   Space — спец   R — сброс на дорогу   F — выйти   V — вид"
                     + (driving.HasDriverChair ? "" : "   · без кресла: стоишь, при ударе вылетишь легче"), HintStyle);
             else if (seat != null)
                 hintPaint.Label(new Rect(20, Screen.height - 40, 900, 30), seat.Vehicle != null && !seat.Vehicle.HasDriver

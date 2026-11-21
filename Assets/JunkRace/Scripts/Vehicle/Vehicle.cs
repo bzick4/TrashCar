@@ -51,6 +51,10 @@ namespace JunkRace
         float airTime;
         float offRouteTime, routeCheckTimer;
         bool onRoute = true;
+        // Срезание: дольше ShortcutDelay секунд не по дороге (за край больше ShortcutTolerance м) — обратно.
+        const float ShortcutDelay = 3f, ShortcutTolerance = 1.2f;
+        float offRoadTime;
+        bool onRoad = true;
         Vector3 lastSafePosition;
         bool hasSafePosition;
         const float ResetMargin = 3f;   // отступ от ограждений при возврате на трассу
@@ -400,13 +404,15 @@ namespace JunkRace
             if (route != null)
             {
                 Vector3 start = Body.position;
-                if ((start.y < fallResetY || route.IsOff(start)) && hasSafePosition) start = lastSafePosition;
+                if ((start.y < fallResetY || !route.OnRoad(start, ShortcutTolerance)) && hasSafePosition) start = lastSafePosition;
                 if (route.ResetPose(start, resetBack, ResetMargin, out Vector3 rp, out Vector3 rf))
                 {
                     // Высота дороги известна из маршрута — не лучом (луч зацепит дерево или валун на дороге).
                     PlaceForReset(new Vector3(rp.x, rp.y + resetHeight, rp.z), rf);
                     onRoute = true;
+                    onRoad = true;
                     offRouteTime = 0f;
+                    offRoadTime = 0f;
                     return;
                 }
             }
@@ -523,15 +529,21 @@ namespace JunkRace
                 {
                     routeCheckTimer = 0.2f;
                     onRoute = !route.IsOff(Body.position);
+                    onRoad = route.OnRoad(Body.position, ShortcutTolerance);
                 }
-                if (onRoute)
-                {
-                    offRouteTime = 0f;
-                    if (groundedWheels > 0) { lastSafePosition = Body.position; hasSafePosition = true; }
-                }
+                // Место, откуда вернуть: последнее, где стоял колёсами на самой дороге.
+                if (onRoad && groundedWheels > 0) { lastSafePosition = Body.position; hasSafePosition = true; }
+                if (onRoad) offRoadTime = 0f;
                 else if (HasDriver)
                 {
-                    // Срезать не выйдет: уехал далеко или упал с горной дороги — обратно на трассу.
+                    // Срезать не выйдет: больше ShortcutDelay секунд не по дороге — обратно туда, где съехал.
+                    offRoadTime += dt;
+                    if (offRoadTime > ShortcutDelay) { offRoadTime = 0f; Flip(); }
+                }
+                if (onRoute) offRouteTime = 0f;
+                else if (HasDriver)
+                {
+                    // Уехал далеко или упал с горной дороги — обратно на трассу.
                     offRouteTime += dt;
                     if (offRouteTime > offRouteDelay) Flip();
                 }

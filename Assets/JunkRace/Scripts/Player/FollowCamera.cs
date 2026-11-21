@@ -63,6 +63,8 @@ namespace JunkRace
         {
             DrawCrosshair();
             if (player == null) return;
+            if (Debug.isDebugBuild && UnityEngine.InputSystem.Keyboard.current != null
+                && UnityEngine.InputSystem.Keyboard.current.f7Key.wasPressedThisFrame) DebugProbe();
             // Модель человечка ставится позже камеры — раз в полсекунды пересобираем список своих рендеров.
             rescanTimer -= Time.deltaTime;
             if (rescanTimer <= 0f) { rescanTimer = 0.5f; ApplyMode(true); }
@@ -127,10 +129,76 @@ namespace JunkRace
             }
 
             float wanted = player.InVehicle ? distance * drivingDistanceMultiplier : distance;
-            currentDistance = Mathf.Lerp(currentDistance, wanted, Time.deltaTime * 3f);
             Vector3 target = player.transform.position + Vector3.up * height;
             Quaternion rot = Quaternion.Euler(pitch, yaw, 0f);
+            // Камера не проходит сквозь стены (ущелье, тоннель, скалы): если между игроком и камерой
+            // препятствие — сразу встаём перед ним, а когда путь свободен — плавно отъезжаем обратно.
+            float allowed = Obstacle(target, -(rot * Vector3.forward), wanted);
+            currentDistance = allowed < currentDistance ? allowed : Mathf.Lerp(currentDistance, allowed, Time.deltaTime * 3f);
             transform.SetPositionAndRotation(target - rot * Vector3.forward * currentDistance, rot);
+        }
+
+        /// <summary>
+        /// Отладка (F7, только редактор и Development Build): что под игроком и что в центре экрана —
+        /// имя, путь в иерархии, коллайдер, материалы и текстуры. Пишет в консоль.
+        /// </summary>
+        void DebugProbe()
+        {
+            var sb = new System.Text.StringBuilder("[JunkRace] F7 —");
+            void Describe(string label, Ray ray)
+            {
+                sb.Append("\n").Append(label).Append(": ");
+                var hits = Physics.RaycastAll(ray, 200f, ~0, QueryTriggerInteraction.Ignore);
+                System.Array.Sort(hits, (x, y) => x.distance.CompareTo(y.distance));
+                int shown = 0;
+                foreach (var h in hits)
+                {
+                    if (h.collider.transform.IsChildOf(player.transform)) continue;
+                    if (shown++ >= 3) break;
+                    var t = h.collider.transform;
+                    string path = t.name;
+                    for (var q = t.parent; q != null; q = q.parent) path = q.name + "/" + path;
+                    sb.Append("\n  • ").Append(path).Append("  [").Append(h.collider.GetType().Name).Append("]  точка ").Append(h.point.ToString("F2"));
+                    var r = t.GetComponent<Renderer>();
+                    if (r == null) sb.Append("  (без рендера)");
+                    else foreach (var m in r.sharedMaterials)
+                        sb.Append("\n      материал «").Append(m != null ? m.name : "null").Append("» шейдер ")
+                          .Append(m != null && m.shader != null ? m.shader.name : "-").Append(" текстура ")
+                          .Append(m != null && m.HasProperty("_BaseMap") && m.GetTexture("_BaseMap") != null ? m.GetTexture("_BaseMap").name : "нет")
+                          .Append(" цвет ").Append(m != null && m.HasProperty("_BaseColor") ? m.GetColor("_BaseColor").ToString("F2") : m != null ? m.color.ToString("F2") : "-");
+                }
+                if (shown == 0) sb.Append("ничего");
+            }
+            Describe("Под ногами", new Ray(player.transform.position + Vector3.up * 0.5f, Vector3.down));
+            Describe("В центре экрана", new Ray(transform.position, transform.forward));
+            Debug.Log(sb.ToString());
+        }
+
+        const float CameraRadius = 0.3f;
+        static readonly RaycastHit[] camHits = new RaycastHit[16];
+
+        /// <summary>
+        /// Насколько далеко камере можно отъехать от target в направлении dir (не дальше max): сфера-проба,
+        /// своя машина, игроки и свободные детали не считаются.
+        /// </summary>
+        float Obstacle(Vector3 target, Vector3 dir, float max)
+        {
+            int n = Physics.SphereCastNonAlloc(target, CameraRadius, dir, camHits, max, ~0, QueryTriggerInteraction.Ignore);
+            float best = max;
+            var mine = player.InVehicle ? player.CurrentVehicle : null;
+            for (int i = 0; i < n; i++)
+            {
+                var h = camHits[i];
+                if (h.distance <= 0f) continue;   // проба началась внутри коллайдера (своя машина и т.п.)
+                var c = h.collider;
+                if (c is CharacterController) continue;
+                var rb = c.attachedRigidbody;
+                if (rb != null && !rb.isKinematic) continue;                       // свободные детали, машины на физике
+                if (mine != null && c.GetComponentInParent<Vehicle>() == mine) continue;   // своя машина (у клиентов она кинематическая)
+                if (c.transform.IsChildOf(player.transform)) continue;            // деталь в руках
+                best = Mathf.Min(best, h.distance - 0.15f);
+            }
+            return Mathf.Max(0.6f, best);
         }
 
         /// <summary>

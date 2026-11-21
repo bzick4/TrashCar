@@ -111,9 +111,8 @@ namespace JunkRace
             if (lookupTimer <= 0f)
             {
                 lookupTimer = 0.25f;
-                // Крыша над камерой (тоннель)? Свою машину и игроков не считаем — только неподвижное.
-                covered = Physics.Raycast(c, Vector3.up, out var roofHit, 25f, ~0, QueryTriggerInteraction.Ignore)
-                          && roofHit.rigidbody == null && !(roofHit.collider is CharacterController);
+                // Камера в тоннеле — осадки стихают (место тоннеля знает генератор трассы).
+                covered = RouteGenerator.Instance != null && RouteGenerator.Instance.InsideTunnel(c);
                 Current = forced >= 0 ? (Kind)forced : KindAt(c);
             }
 

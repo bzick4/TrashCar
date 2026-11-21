@@ -48,8 +48,12 @@ namespace JunkRace
         [SerializeField] float featureSize = 380f;
         [Tooltip("Расстояние между грядами (кольца силуэтов), м.")]
         [SerializeField] float ridgeSpacing = 230f;
-        [Tooltip("Высота рельефа там, где холмов нет: чуть ниже земли трассы.")]
-        [SerializeField] float belowGround = -0.7f;
+        /// <summary>
+        /// Высота рельефа там, где холмов нет (под трассой). Глубоко: под трассой есть низины — ущелья до −8 м
+        /// и русла рек до −2.6 м; раньше подложка лежала на −0.7 и вылезала в них зелёным полом.
+        /// Сверху её всё равно закрывает земля трассы (плиты на 260 м вокруг, холмы — с 90 м).
+        /// </summary>
+        const float belowGround = -12f;
 
         [Header("Лес на склонах")]
         [SerializeField] int treeCount = 2600;
@@ -196,6 +200,10 @@ namespace JunkRace
             for (int c = 0; c < cw; c++)
             {
                 int a = r * vc + c, b = a + 1, d = a + vc, e = d + 1;
+                // Ровная подложка под трассой не нужна (её всё равно закрывает земля трассы, а в ущелья и русла
+                // она бы вылезала) — квадраты, где холмов нет, не рисуем вовсе.
+                if (verts[a].y <= belowGround + 0.01f && verts[b].y <= belowGround + 0.01f
+                    && verts[d].y <= belowGround + 0.01f && verts[e].y <= belowGround + 0.01f) continue;
                 // Диагональ через одну — грани не выстраиваются в «ёлочку».
                 if (((c0 + c) + (r0 + r)) % 2 == 0)
                 {
@@ -209,6 +217,8 @@ namespace JunkRace
                 }
             }
 
+            if (t < tris.Length) System.Array.Resize(ref tris, t);
+            if (t == 0) return;   // весь кусок ровный — рисовать нечего
             var mesh = new Mesh { name = "Задник_холмы" };
             mesh.indexFormat = vc * vr > 65000 ? IndexFormat.UInt32 : IndexFormat.UInt16;
             mesh.vertices = verts;

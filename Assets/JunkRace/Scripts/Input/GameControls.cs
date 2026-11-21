@@ -40,6 +40,9 @@ namespace JunkRace
             Move.AddCompositeBinding("2DVector")
                 .With("Up", "<Keyboard>/w").With("Down", "<Keyboard>/s")
                 .With("Left", "<Keyboard>/a").With("Right", "<Keyboard>/d");
+            Move.AddCompositeBinding("2DVector")   // и стрелками
+                .With("Up", "<Keyboard>/upArrow").With("Down", "<Keyboard>/downArrow")
+                .With("Left", "<Keyboard>/leftArrow").With("Right", "<Keyboard>/rightArrow");
             Move.AddBinding("<Gamepad>/leftStick");
 
             Jump = OnFoot.AddAction("Jump", InputActionType.Button, "<Keyboard>/space");
@@ -61,11 +64,15 @@ namespace JunkRace
             Throttle.AddCompositeBinding("1DAxis")
                 .With("Positive", "<Keyboard>/w").With("Negative", "<Keyboard>/s");
             Throttle.AddCompositeBinding("1DAxis")
+                .With("Positive", "<Keyboard>/upArrow").With("Negative", "<Keyboard>/downArrow");
+            Throttle.AddCompositeBinding("1DAxis")
                 .With("Positive", "<Gamepad>/rightTrigger").With("Negative", "<Gamepad>/leftTrigger");
 
             Steer = Driving.AddAction("Steer", InputActionType.Value);
             Steer.AddCompositeBinding("1DAxis")
                 .With("Positive", "<Keyboard>/d").With("Negative", "<Keyboard>/a");
+            Steer.AddCompositeBinding("1DAxis")
+                .With("Positive", "<Keyboard>/rightArrow").With("Negative", "<Keyboard>/leftArrow");
             Steer.AddBinding("<Gamepad>/leftStick/x");
 
             Special = Driving.AddAction("Special", InputActionType.Button, "<Keyboard>/space");

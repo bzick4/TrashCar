@@ -201,6 +201,16 @@ namespace JunkRace
             return h.Distance > h.Sample.HalfWidth + OffMargin || h.Below > FallDepth;
         }
 
+        /// <summary>
+        /// Едет по дороге (с допуском tolerance за край): для проверки на срезание. Над пропастью
+        /// прыжка — тоже «по дороге» (в полёте над ней), если не упал заметно ниже.
+        /// </summary>
+        public bool OnRoad(Vector3 p, float tolerance)
+        {
+            if (!Nearest(p, false, out var h)) return true;
+            return h.Distance <= h.Sample.HalfWidth + tolerance && h.Below < FallDepth;
+        }
+
         /// <summary>Свободно ли место (для деревьев и камней): дорога не ближе clearance от её края.</summary>
         public bool IsClear(Vector3 p, float clearance)
         {
@@ -220,8 +230,8 @@ namespace JunkRace
             var path = h.Path;
             float along = Mathf.Max(0f, h.Along - back);
             var s = path.At(along);
-            // Назад до настоящей дороги: не в пропасть и не в реку (брод — единственное место, где дорога ниже земли).
-            for (int i = 0; i < 60 && (!s.Road || s.Pos.y < -0.3f) && along > 0f; i++)
+            // Назад до настоящей дороги: не в пропасть и не в реку (ущелье ниже земли — можно, там сухо).
+            for (int i = 0; i < 60 && (!s.Road || WaterZone.TryGetDepth(s.Pos + Vector3.up * 0.3f, out _)) && along > 0f; i++)
             {
                 along = Mathf.Max(0f, along - 1f);
                 s = path.At(along);

@@ -72,6 +72,24 @@ namespace JunkRace
         }
 
         public string Summary { get; private set; } = "";
+
+        bool test;   // эта трасса — тестовая (TestRoute)
+
+        /// <summary>
+        /// Тестовая трасса (только в редакторе, меню «JunkRace → Тестовая трасса»): всегда снег → горы
+        /// (ущелье с тоннелем и развилка «тоннель вниз / перевал вверх») → лес с рекой. В сборке — всегда выключена.
+        /// </summary>
+        public static bool TestRoute
+        {
+#if UNITY_EDITOR
+            get => UnityEditor.EditorPrefs.GetBool(TestRouteKey, false);
+            set => UnityEditor.EditorPrefs.SetBool(TestRouteKey, value);
+#else
+            get => false;
+            set { }
+#endif
+        }
+        public const string TestRouteKey = "JunkRace.TestRoute";
         /// <summary>Участки трассы: прогресс начала (м от старта) и биом — по ним погода.</summary>
         public readonly List<float> SectionStarts = new List<float>();
         public readonly List<Biome> SectionBiomes = new List<Biome>();
@@ -250,7 +268,9 @@ namespace JunkRace
             int sections = 3 + rng.Next(2);
             var order = new List<Biome> { Biome.Forest, Biome.Mountains, Biome.Snow };
             Shuffle(order);
-            if (sections > 3)
+            test = TestRoute;
+            if (test) { sections = 3; order = new List<Biome> { Biome.Snow, Biome.Mountains, Biome.Forest }; }
+            else if (sections > 3)
             {
                 var b4 = (Biome)rng.Next(3);
                 if (b4 == order[2]) b4 = (Biome)(((int)b4 + 1 + rng.Next(2)) % 3);
@@ -314,6 +334,7 @@ namespace JunkRace
         {
             riverInSection = false;
             Run(main, 20f, RandRange(-35f, 35f), -Mathf.Min(pos.y, 1f), ForestWidth);
+            if (test) { ForestRoadChunk(); RiverCrossing(ForestWidth); ForestSweep(); return; }   // тестовая: река
             int forkAt = fork ? rng.Next(0, chunks + 1) : -1;
             for (int i = 0; i < chunks; i++)
             {
@@ -339,6 +360,14 @@ namespace JunkRace
             Run(main, 20f, RandRange(-35f, 35f), 0f, MountainWidth);
             // В горы — сначала вверх: развилке с прыжком нужна высота, иначе падать некуда.
             MountainClimb();
+            if (test)
+            {
+                // Тестовая: ущелье с тоннелем, потом развилка «тоннель вниз / перевал вверх».
+                MountainCanyon();
+                MountainTunnelFork(true);
+                while (pos.y > 3f) Run(main, 60f, RandRange(-20f, 20f), -Mathf.Min(pos.y - 1f, RandRange(8f, 12f)));
+                return;
+            }
             if (rng.Next(2) == 0) MountainClimb();
             int forkAt = fork ? rng.Next(0, chunks) : -1;
             for (int i = 0; i < chunks; i++)
@@ -372,7 +401,7 @@ namespace JunkRace
             for (float d = start + 10f; d < main.Length - 6f; d += 12f, side = -side)
             {
                 var s = main.At(d);
-                Tree(s.Pos + s.Right * side * (s.HalfWidth - 2.2f), s.Pos.y, 0.35f, true);
+                RoadJunk(s.Pos + s.Right * side * (s.HalfWidth - 2.2f), s.Pos.y);   // слалом — между кучами мусора
             }
         }
 
@@ -584,11 +613,19 @@ namespace JunkRace
             /// <summary>Полуширина по x (дорога может идти наискосок).</summary>
             public static float HalfX(RouteSample s) => s.HalfWidth / Mathf.Max(0.6f, Mathf.Abs(s.Forward.z));
 
-            /// <summary>Точка в ущелье или на его стенах (там, где дорога заметно ниже земли).</summary>
+            /// <summary>
+            /// Предмет с центром p и радиусом margin задевает ущелье (дно или стены, там где дорога ниже земли):
+            /// проверяем все строки ущелья в пределах его размера по z, а не только под центром.
+            /// </summary>
             public bool Covers(Vector3 p, float margin)
             {
-                if (!At(p.z, out var s) || s.Pos.y > -0.8f) return false;
-                return Mathf.Abs(p.x - s.Pos.x) < HalfX(s) + CanyonShoulder + CanyonWall + margin;
+                if (Rows.Count < 2 || p.z + margin < ZMin || p.z - margin > ZMax) return false;
+                foreach (var s in Rows)
+                {
+                    if (s.Pos.y > -0.8f || Mathf.Abs(s.Pos.z - p.z) > margin + 1f) continue;
+                    if (Mathf.Abs(p.x - s.Pos.x) < HalfX(s) + CanyonShoulder + CanyonWall + margin) return true;
+                }
+                return false;
             }
         }
 
@@ -605,13 +642,13 @@ namespace JunkRace
             float depth = RandRange(6.5f, 8f);
             Run(main, 34f, RandRange(-8f, 8f), -depth, MountainWidth, -depth);
             float bottom0 = main.Length;
-            Run(main, RandRange(55f, 85f), RandRange(-16f, 16f), 0f, MountainWidth, -depth);
-            float bottom1 = main.Length;
+            float tunnel = RandRange(34f, 100f);   // длина тоннеля, м
+            Run(main, tunnel + 12f, RandRange(-14f, 14f), 0f, MountainWidth, -depth);
             Run(main, 34f, RandRange(-8f, 8f), depth, MountainWidth, -depth);
             canyons.Add(new Canyon
             {
                 Path = main, From = from, To = main.Samples.Count - 1,
-                TunnelFrom = bottom0 + 6f, TunnelTo = bottom1 - 6f,
+                TunnelFrom = bottom0 + 6f, TunnelTo = bottom0 + 6f + tunnel,
             });
             Run(main, 10f, 0f, 0f, MountainWidth);
         }
@@ -626,6 +663,9 @@ namespace JunkRace
                 new Branch { Name = "Тропа", Width = 5f, Bulge = 12f, Wobble = 4f, Waves = 3, Kind = BranchKind.Trail },
             };
             Shuffle(pool);
+            // Развилка с тоннелем (раз из трёх): одна ветка уходит вниз под землю, вторая — вверх («Перевал»)
+            // или серпантином / тропой.
+            if (rng.Next(3) == 0) { MountainTunnelFork(false); return; }
             // Прыжок — в двух случаях из трёх, иначе две обычные ветки.
             if (rng.Next(3) > 0) Fork(jump, pool[0], 110f);
             else Fork(pool[0], pool[1], RandRange(100f, 130f));
@@ -641,6 +681,13 @@ namespace JunkRace
         void BuildSnow(int chunks, bool fork)
         {
             riverInSection = false;
+            if (test)
+            {
+                Run(main, 20f, RandRange(-30f, 30f), -Mathf.Min(pos.y, 2f), SnowWidth);
+                SnowRoadChunk(); SnowDrifts();
+                Run(main, 12f, 0f, -pos.y, SnowWidth);
+                return;
+            }
             // Сначала к равнине (после гор).
             Run(main, 20f, RandRange(-30f, 30f), -Mathf.Min(pos.y, 2f), SnowWidth);
             int forkAt = fork ? rng.Next(0, chunks + 1) : -1;
@@ -782,7 +829,7 @@ namespace JunkRace
             }
         }
 
-        enum BranchKind { Plain, Trail, Jump }
+        enum BranchKind { Plain, Trail, Jump, Tunnel }
 
         struct Branch
         {
@@ -845,11 +892,20 @@ namespace JunkRace
                 float h = b.Hill * bump;
                 bool road = true;
                 if (b.Kind == BranchKind.Jump) h += JumpProfile(t, out road);
+                if (b.Kind == BranchKind.Tunnel) h += TunnelProfile(t);
                 Vector3 p = start + fwd * (length * t) + rightDir * lateral;
                 p.y = start.y + h;
                 path.Add(new RouteSample { Pos = p, Forward = fwd, HalfWidth = b.Width / 2f, Road = road, Biome = biome });
             }
             path.SmoothForwards();   // до расстановки препятствий: им нужно верное «вбок»
+
+            // Ветка вниз: ущелье с тоннелем на дне (тоннель — середина ровного дна).
+            if (b.Kind == BranchKind.Tunnel)
+                canyons.Add(new Canyon
+                {
+                    Path = path, From = 0, To = path.Samples.Count - 1,
+                    TunnelFrom = path.Dist[Mathf.RoundToInt(n * 0.36f)], TunnelTo = path.Dist[Mathf.RoundToInt(n * 0.64f)],
+                });
 
             // Препятствия веток.
             if (b.Kind == BranchKind.Trail && biome == Biome.Snow)
@@ -867,12 +923,44 @@ namespace JunkRace
                 for (float d = 10f; d < path.Length - 10f; d += RandRange(7f, 11f))
                 {
                     var s = path.At(d);
-                    Tree(s.Pos + s.Right * (rng.Next(2) == 0 ? -1f : 1f) * (s.HalfWidth - 0.9f), s.Pos.y, 0.25f, true);
+                    RoadJunk(s.Pos + s.Right * (rng.Next(2) == 0 ? -1f : 1f) * (s.HalfWidth - 1.1f), s.Pos.y);
                 }
                 Log(path.At(path.Length * 0.3f), 0.2f);
                 Log(path.At(path.Length * 0.7f), 0.2f);
             }
             return path;
+        }
+
+        const float TunnelBranchDepth = 6.5f;
+
+        /// <summary>
+        /// Развилка: одна ветка — «Тоннель» (под землю), вторая — «Перевал» (вверх) или серпантин / тропа.
+        /// upAndDown — вторая точно «Перевал». Тоннелю нужна земля — если дорога высоко, сперва спускаемся.
+        /// </summary>
+        void MountainTunnelFork(bool upAndDown)
+        {
+            var pool = new List<Branch>
+            {
+                new Branch { Name = "Серпантин", Width = 7f, Bulge = 22f, Wobble = 9f, Waves = 4, Kind = BranchKind.Plain },
+                new Branch { Name = "Перевал", Width = 7f, Bulge = 18f, Wobble = 0f, Waves = 0, Hill = 7f, Kind = BranchKind.Plain },
+                new Branch { Name = "Тропа", Width = 5f, Bulge = 12f, Wobble = 4f, Waves = 3, Kind = BranchKind.Trail },
+            };
+            Shuffle(pool);
+            while (pos.y > 3f) Run(main, 40f, RandRange(-12f, 12f), -Mathf.Min(pos.y - 1f, 8f), MountainWidth);
+            if (pos.y > 0.2f) Run(main, 14f, 0f, -pos.y, MountainWidth);
+            var tunnel = new Branch { Name = "Тоннель", Width = MountainWidth, Bulge = 22f, Wobble = 0f, Waves = 0, Kind = BranchKind.Tunnel };
+            var other = upAndDown || rng.Next(2) == 0 ? pool.Find(x => x.Name == "Перевал") : pool[0];
+            float len = RandRange(150f, 190f);   // дно ~60 м: тоннель не короче 34 м
+            if (rng.Next(2) == 0) Fork(tunnel, other, len); else Fork(other, tunnel, len);
+        }
+
+        /// <summary>Ветка-тоннель: спуск ниже земли, длинное ровное дно (там тоннель), подъём обратно.</summary>
+        static float TunnelProfile(float t)
+        {
+            if (t < 0.15f || t > 0.85f) return 0f;
+            if (t < 0.32f) return -TunnelBranchDepth * Smooth((t - 0.15f) / 0.17f);
+            if (t < 0.68f) return -TunnelBranchDepth;
+            return -TunnelBranchDepth * (1f - Smooth((t - 0.68f) / 0.17f));
         }
 
         /// <summary>
@@ -1232,102 +1320,211 @@ namespace JunkRace
         /// </summary>
         void BuildCanyon(Bounds b, Canyon c)
         {
+            var groundMat = groundMountain != null ? Tiled(groundMountain, Vector2.one) : Mat(MountainGround);
+            var wallMat = sideMountain != null ? sideMountain : Mat(MountainSide);
+
+            // Вид: над тоннелем — та же земля, что вокруг; у входа и выхода — скальный склон с открытым проёмом,
+            // внутри — каменные стены и потолок (отдельный меш). Физика: вырез по всей длине (там дорога)
+            // плюс крыша-коллайдер над тоннелем — по земле сверху можно ходить.
+            var collision = CanyonGrid(b, c, false, out _, out _);
+            var colGo = new GameObject("Ущелье_физика");
+            colGo.transform.SetParent(root, false);
+            colGo.AddComponent<MeshCollider>().sharedMesh = collision;
+            colGo.isStatic = true;
+
+            var view = CanyonGrid(b, c, true, out _, out _);
+            var go = new GameObject("Ущелье");
+            go.transform.SetParent(root, false);
+            go.AddComponent<MeshFilter>().sharedMesh = view;
+            go.AddComponent<MeshRenderer>().sharedMaterials = new[] { groundMat, wallMat };
+            go.isStatic = true;
+
+            BuildTunnel(c, wallMat, groundMat);
+        }
+
+        const float TunnelRoof = 1.2f;
+
+        /// <summary>Точка внутри тоннеля (под потолком) — для погоды: там не идёт дождь и снег.</summary>
+        public bool InsideTunnel(Vector3 p)
+        {
+            if (p.y > GroundY - TunnelRoof) return false;
+            foreach (var c in canyons)
+            {
+                var rows = c.Rows;
+                for (int j = 0; j + 1 < rows.Count; j++)
+                {
+                    if (p.z < rows[j].Pos.z || p.z > rows[j + 1].Pos.z) continue;
+                    if (!InTunnel(c, j) && !InTunnel(c, j + 1)) break;
+                    var s = rows[j];
+                    if (Mathf.Abs(p.x - s.Pos.x) < Canyon.HalfX(s) + CanyonShoulder + 0.35f) return true;
+                    break;
+                }
+            }
+            return false;
+        }   // толщина земли над тоннелем, м (потолок — на GroundY − TunnelRoof)
+
+        bool InTunnel(Canyon c, int row) =>
+            c.TunnelTo - c.TunnelFrom >= 10f && c.Path.Dist[c.From + row] >= c.TunnelFrom && c.Path.Dist[c.From + row] <= c.TunnelTo;
+
+        /// <summary>
+        /// Сетка ущелья полосой по z на всю ширину карты: строки — точки дороги, столбцы — отступы по x.
+        /// view = true: над тоннелем строки ровные (земля целая), у порталов — проём (центральные квадраты пропущены).
+        /// </summary>
+        Mesh CanyonGrid(Bounds b, Canyon c, bool view, out List<int> ground, out List<int> walls)
+        {
             var rows = c.Rows;
-            // Отступы (по одну сторону): дно, обочина, низ стены, середина стены (рваная), край, дальше ровно.
-            int perSide = 6;
-            int cols = 2 + perSide * 2 + 1 + 2;   // прямые края карты + стороны + середина
-            var verts = new List<Vector3>(rows.Count * cols);
-            var uvs = new List<Vector2>(rows.Count * cols);
-            var kinds = new List<int>();   // 0 — земля/дно, 1 — стена (по столбцу)
+            var verts = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            int cols = 0;
             for (int j = 0; j < rows.Count; j++)
             {
                 var s = rows[j];
+                bool flat = view && InTunnel(c, j);   // над тоннелем — земля вровень с окружающей
                 float hx = Canyon.HalfX(s), y = s.Pos.y, z = s.Pos.z;
                 float deep = Mathf.Max(0f, GroundY - y);
                 float floor = y - 0.08f;
                 float jag(float side) => Mathf.Sin(z * 0.37f + side * 1.7f) * 0.5f + Mathf.Sin(z * 1.13f + side) * 0.25f;
-                void Col(float x, float h, int kind)
+                int before = verts.Count;
+                void Col(float x, float h)
                 {
+                    h = flat ? GroundY : Mathf.Min(h, GroundY);
                     verts.Add(new Vector3(x, h, z));
-                    uvs.Add(kind == 1 ? new Vector2(z / SideTile, h / SideTile) : new Vector2(x, z) / GroundTile);
-                    if (j == 0) kinds.Add(kind);
+                    uvs.Add(new Vector2(x, z) / GroundTile);
                 }
-                Col(b.min.x, GroundY, 0);
+                Col(b.min.x, GroundY);
                 for (int side = -1; side <= 1; side += 2)
                 {
-                    // Слева направо: для side=-1 идём от края к середине, для side=+1 — от середины к краю.
-                    var list = new (float o, float h, int kind)[]
+                    var list = new (float o, float h)[]
                     {
-                        (hx + CanyonShoulder + CanyonWall + 2f, GroundY, 0),
-                        (hx + CanyonShoulder + CanyonWall, GroundY, 1),
-                        (hx + CanyonShoulder + CanyonWall * 0.55f + jag(side) * 0.6f, y + deep * 0.72f + jag(-side) * 0.4f, 1),
-                        (hx + CanyonShoulder + 0.35f, y + deep * 0.18f, 1),
-                        (hx + CanyonShoulder, floor, 0),
-                        (hx * 0.5f, floor, 0),
+                        (hx + CanyonShoulder + CanyonWall + 2f, GroundY),
+                        (hx + CanyonShoulder + CanyonWall, GroundY),
+                        (hx + CanyonShoulder + CanyonWall * 0.55f + jag(side) * 0.6f, y + deep * 0.72f + jag(-side) * 0.4f),
+                        (hx + CanyonShoulder + 0.35f, y + deep * 0.18f),
+                        (hx + CanyonShoulder, floor),
+                        (hx * 0.5f, floor),
                     };
-                    if (side < 0)
-                        foreach (var e in list) Col(s.Pos.x - e.o, Mathf.Min(e.h, GroundY), e.kind);
+                    if (side < 0) foreach (var e in list) Col(s.Pos.x - e.o, e.h);
                     else
                     {
-                        if (side > 0) Col(s.Pos.x, floor, 0);   // середина
-                        for (int k = list.Length - 1; k >= 0; k--) Col(s.Pos.x + list[k].o, Mathf.Min(list[k].h, GroundY), list[k].kind);
+                        Col(s.Pos.x, floor);   // середина
+                        for (int k = list.Length - 1; k >= 0; k--) Col(s.Pos.x + list[k].o, list[k].h);
                     }
                 }
-                Col(b.max.x, GroundY, 0);
+                Col(b.max.x, GroundY);
+                cols = verts.Count - before;
             }
-            cols = verts.Count / rows.Count;
 
-            // Квадрат — стена, если хоть один из двух столбцов — стена (скальная текстура), иначе земля.
-            var ground = new List<int>(); var walls = new List<int>();
+            // Квадраты: крутые (перепад > 1 м) — скала, остальные — земля. У порталов центр пропускаем — проём.
+            ground = new List<int>(); walls = new List<int>();
             for (int j = 0; j + 1 < rows.Count; j++)
+            {
+                bool portal = view && InTunnel(c, j) != InTunnel(c, j + 1);   // вход/выход: проём открыт
                 for (int i = 0; i + 1 < cols; i++)
                 {
-                    var list = kinds[i] == 1 && kinds[i + 1] == 1 || (kinds[i] == 1) != (kinds[i + 1] == 1) && (i > 0 && i + 2 < cols) && Mathf.Abs(verts[j * cols + i].y - verts[j * cols + i + 1].y) > 0.3f ? walls : ground;
+                    if (portal && i >= 4 && i + 1 <= cols - 5) continue;   // проём в тоннель (от низа стены до низа стены)
                     int a = j * cols + i, n = (j + 1) * cols + i;
+                    float lo = Mathf.Min(Mathf.Min(verts[a].y, verts[a + 1].y), Mathf.Min(verts[n].y, verts[n + 1].y));
+                    float hi = Mathf.Max(Mathf.Max(verts[a].y, verts[a + 1].y), Mathf.Max(verts[n].y, verts[n + 1].y));
+                    var list = hi - lo > 1f ? walls : ground;
                     // Строки — по z, столбцы — по x: обход по часовой, если смотреть сверху.
                     list.Add(a); list.Add(n); list.Add(n + 1);
                     list.Add(a); list.Add(n + 1); list.Add(a + 1);
                 }
+            }
+            // Скале — UV по вертикали (вдоль ущелья и по высоте), земле — сверху.
+            if (view)
+                foreach (int idx in walls) uvs[idx] = new Vector2(verts[idx].z / SideTile + verts[idx].x / SideTile * 0.5f, verts[idx].y / SideTile);
 
-            var mesh = new Mesh { name = "Ущелье" };
+            var mesh = new Mesh { name = view ? "Ущелье" : "Ущелье_физика" };
             if (verts.Count > 65000) mesh.indexFormat = IndexFormat.UInt32;
             mesh.SetVertices(verts);
             mesh.SetUVs(0, uvs);
-            mesh.subMeshCount = 2;
-            mesh.SetTriangles(ground, 0);
-            mesh.SetTriangles(walls, 1);
+            if (view)
+            {
+                mesh.subMeshCount = 2;
+                mesh.SetTriangles(ground, 0);
+                mesh.SetTriangles(walls, 1);
+            }
+            else
+            {
+                var all = new List<int>(ground); all.AddRange(walls);
+                mesh.SetTriangles(all, 0);
+            }
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
-
-            var groundMat = groundMountain != null ? Tiled(groundMountain, Vector2.one) : Mat(MountainGround);
-            var wallMat = sideMountain != null ? sideMountain : Mat(MountainSide);
-            var go = new GameObject("Ущелье");
-            go.transform.SetParent(root, false);
-            go.AddComponent<MeshFilter>().sharedMesh = mesh;
-            var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterials = new[] { groundMat, wallMat };
-            go.AddComponent<MeshCollider>().sharedMesh = mesh;
-            go.isStatic = true;
-
-            BuildTunnel(c, groundMat);
+            return mesh;
         }
 
         static readonly Color PortalWood = new Color(0.42f, 0.28f, 0.17f);
         static readonly Color LampColor = new Color(1f, 0.82f, 0.5f);
 
-        /// <summary>Тоннель: крыша кусками по дороге (сверху — земля вровень), порталы у входа и выхода, фонари.</summary>
-        void BuildTunnel(Canyon c, Material roofMat)
+        /// <summary>
+        /// Тоннель: каменные стены и потолок изнутри, невидимая крыша-коллайдер под землёй над тоннелем,
+        /// деревянные порталы у входа и выхода, фонари под потолком.
+        /// </summary>
+        void BuildTunnel(Canyon c, Material wallMat, Material floorMat)
         {
-            var path = c.Path;
             if (c.TunnelTo - c.TunnelFrom < 10f) return;
+            float ceil = GroundY - TunnelRoof;
+            var verts = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            var tris = new List<int>();
+            var floorTris = new List<int>();
+            void Q(Vector3 a, Vector3 b2, Vector3 c2, Vector3 d, Vector2 ua, Vector2 ub, Vector2 uc, Vector2 ud) => Quad(verts, uvs, tris, a, b2, c2, d, ua, ub, uc, ud);
+            var rows = c.Rows;
+            for (int j = 0; j + 1 < rows.Count; j++)
+            {
+                if (!InTunnel(c, j) && !InTunnel(c, j + 1)) continue;
+                var s0 = rows[j]; var s1 = rows[j + 1];
+                float l0 = s0.Pos.x - Canyon.HalfX(s0) - CanyonShoulder - 0.35f, r0 = s0.Pos.x + Canyon.HalfX(s0) + CanyonShoulder + 0.35f;
+                float l1 = s1.Pos.x - Canyon.HalfX(s1) - CanyonShoulder - 0.35f, r1 = s1.Pos.x + Canyon.HalfX(s1) + CanyonShoulder + 0.35f;
+                float f0 = s0.Pos.y - 0.2f, f1 = s1.Pos.y - 0.2f, z0 = s0.Pos.z, z1 = s1.Pos.z;
+                // Левая стена (смотрит внутрь, +x), правая (−x), потолок (вниз).
+                Q(new Vector3(l0, f0, z0), new Vector3(l0, ceil, z0), new Vector3(l1, ceil, z1), new Vector3(l1, f1, z1),
+                  new Vector2(z0, f0) / SideTile, new Vector2(z0, ceil) / SideTile, new Vector2(z1, ceil) / SideTile, new Vector2(z1, f1) / SideTile);
+                Q(new Vector3(r0, f0, z0), new Vector3(r1, f1, z1), new Vector3(r1, ceil, z1), new Vector3(r0, ceil, z0),
+                  new Vector2(z0, f0) / SideTile, new Vector2(z1, f1) / SideTile, new Vector2(z1, ceil) / SideTile, new Vector2(z0, ceil) / SideTile);
+                Q(new Vector3(l0, ceil, z0), new Vector3(r0, ceil, z0), new Vector3(r1, ceil, z1), new Vector3(l1, ceil, z1),
+                  new Vector2(l0, z0) / SideTile, new Vector2(r0, z0) / SideTile, new Vector2(r1, z1) / SideTile, new Vector2(l1, z1) / SideTile);
+                // Пол от стены до стены (дорога лежит сверху): обочины не дырявые.
+                Quad(verts, uvs, floorTris, new Vector3(l0, f0 + 0.1f, z0), new Vector3(l1, f1 + 0.1f, z1), new Vector3(r1, f1 + 0.1f, z1), new Vector3(r0, f0 + 0.1f, z0),
+                     new Vector2(l0, z0) / GroundTile, new Vector2(l1, z1) / GroundTile, new Vector2(r1, z1) / GroundTile, new Vector2(r0, z0) / GroundTile);
+            }
+            // Над входом и выходом — скала от потолка до земли (иначе над балкой видна пустота).
+            foreach (float d in new[] { c.TunnelFrom, c.TunnelTo })
+            {
+                var s = c.Path.At(d);
+                float hx = Canyon.HalfX(s) + CanyonShoulder + 0.35f;
+                Vector3 a0 = new Vector3(s.Pos.x - hx, ceil - 0.05f, s.Pos.z), a1 = new Vector3(s.Pos.x + hx, ceil - 0.05f, s.Pos.z);
+                Vector3 b0 = new Vector3(s.Pos.x - hx, GroundY, s.Pos.z), b1 = new Vector3(s.Pos.x + hx, GroundY, s.Pos.z);
+                Vector2 u(Vector3 p) => new Vector2(p.x, p.y) / SideTile;
+                Q(a0, b0, b1, a1, u(a0), u(b0), u(b1), u(a1));   // смотрит назад (−z)
+                Q(a0, a1, b1, b0, u(a0), u(a1), u(b1), u(b0));   // и вперёд (+z) — видно с обеих сторон
+            }
+            var mesh = new Mesh { name = "Тоннель" };
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.subMeshCount = 2;
+            mesh.SetTriangles(tris, 0);
+            mesh.SetTriangles(floorTris, 1);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            var go = new GameObject("Тоннель");
+            go.transform.SetParent(root, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterials = new[] { wallMat, floorMat };
+            mr.shadowCastingMode = ShadowCastingMode.Off;   // тень даёт земля сверху — в тоннеле темно, горят фонари
+            go.isStatic = true;
+
+            // Крыша-коллайдер: невидимые плиты над тоннелем (верх вровень с землёй) — сверху можно ходить.
+            var path = c.Path;
             for (float d = c.TunnelFrom; d < c.TunnelTo; d += 4f)
             {
                 var s = path.At(d + 2f);
-                float w = (s.HalfWidth + CanyonShoulder + CanyonWall + 1.5f) * 2f;
-                // Верх чуть ниже земли — не мерцает с ней; низ — над дорогой с запасом.
-                var roof = Piece("Тоннель_крыша", cube, new Vector3(s.Pos.x, GroundY - 1.02f, s.Pos.z), Quaternion.LookRotation(s.Forward),
-                                 new Vector3(w, 2f, 4.3f), MountainGround, Col.Box);
-                roof.GetComponent<MeshRenderer>().sharedMaterial = roofMat;
+                float w = (Canyon.HalfX(s) + CanyonShoulder + CanyonWall + 1.5f) * 2f;
+                Hidden(Piece("Тоннель_крыша", cube, new Vector3(s.Pos.x, GroundY - TunnelRoof / 2f, s.Pos.z), Quaternion.identity,
+                             new Vector3(w, TunnelRoof, 4.3f), MountainGround, Col.Box));
             }
             Portal(path.At(c.TunnelFrom));
             Portal(path.At(c.TunnelTo));
@@ -1335,7 +1532,7 @@ namespace JunkRace
             for (float d = c.TunnelFrom + 6f; d < c.TunnelTo - 3f; d += 12f)
             {
                 var s = path.At(d);
-                Vector3 at = new Vector3(s.Pos.x, GroundY - 2.35f, s.Pos.z);
+                Vector3 at = new Vector3(s.Pos.x, ceil - 0.3f, s.Pos.z);
                 Piece("Фонарь", sphere, at, Quaternion.identity, Vector3.one * 0.35f, LampColor * 1.4f, Col.None, Decor.Small);
                 var lightGo = new GameObject("Свет_тоннеля");
                 lightGo.transform.SetParent(root, false);
@@ -1349,12 +1546,12 @@ namespace JunkRace
             }
         }
 
-        /// <summary>Портал тоннеля: два столба по краям дороги и балка — как вход в шахту.</summary>
+        /// <summary>Портал тоннеля: два столба по краям дороги и балка под потолком — как вход в шахту.</summary>
         void Portal(RouteSample s)
         {
             var rot = Quaternion.LookRotation(s.Forward);
             Vector3 right = rot * Vector3.right;
-            float top = GroundY - 2.02f - 0.6f, h = top - s.Pos.y;   // балка — сразу под крышей тоннеля
+            float top = GroundY - TunnelRoof - 0.6f, h = top - s.Pos.y;
             for (int k = -1; k <= 1; k += 2)
                 Piece("Портал_столб", cube, s.Pos + right * k * (s.HalfWidth + 0.5f) + Vector3.up * (h / 2f), rot,
                       new Vector3(0.6f, h, 0.6f), PortalWood, Col.Box);
@@ -1687,21 +1884,21 @@ namespace JunkRace
             if (Any(rockModels) && rng.NextDouble() < 0.1)
             {
                 float r = RandRange(2.5f, 6f);
-                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r + RandRange(8f, 40f));
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 1.2f + RandRange(8f, 40f));
                 p.y = GroundY;
-                if (map.IsClear(p, r) && !InRiver(p, r))
-                    Model(rockModels, new Vector3(p.x, GroundY + r * 0.85f - r * 0.05f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                if (map.IsClear(p, r * 1.15f) && !InRiver(p, r * 1.15f))
+                    Model(rockModels, new Vector3(p.x, GroundY + r * 0.85f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
                           new Vector3(r * 2.1f, r * 1.7f, r * 1.9f), Decor.Tree);
             }
             if (Any(mountainModels) && rng.NextDouble() < 0.06)
             {
                 // Холм поближе: та же модель горы, но поменьше.
                 float r = RandRange(8f, 16f);
-                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r + RandRange(15f, 45f));
-                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f) && !InRiver(p, r))
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 1.3f + RandRange(15f, 45f));
+                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 1.25f) && !InRiver(p, r * 1.25f))
                 {
                     float h = RandRange(0.6f, 1f);
-                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f - r * 0.1f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
                           new Vector3(r * 2f, r * 1.6f * h, r * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
                 }
             }
@@ -1714,17 +1911,16 @@ namespace JunkRace
             {
                 // Горы на горизонте: большие сплюснутые «холмы» со снежными шапками.
                 float r = RandRange(18f, 40f);
-                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 0.8f + RandRange(15f, 50f));
-                p.y = GroundY - r * 0.35f;
-                if (!map.IsClear(p, r * 0.9f) || InRiver(p, r)) return;
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 1.3f + RandRange(15f, 50f));
                 float h = RandRange(0.7f, 1.2f);
+                p.y = GroundY + r * h;   // низ на земле (горы не утапливаем — меньше значит меньше)
+                if (!map.IsClear(new Vector3(p.x, GroundY, p.z), r * 1.25f) || InRiver(p, r * 1.25f)) return;
                 if (Any(mountainModels))
                 {
-                    // Модель горы уже со снегом: стоит на земле, только поворот по вертикали.
+                    // Модель горы уже со снегом: стоит низом на земле, только поворот по вертикали.
                     float k = RandRange(0.8f, 1.2f);
-                    Model(mountainModels, new Vector3(p.x, GroundY - r * 0.15f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
-                          new Vector3(r * 2f, r * 1.6f * h, r * 2f * k), Decor.Far)
-                        .transform.position += Vector3.up * (r * 1.6f * h * 0.5f);
+                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * 2f, r * 1.6f * h, r * 2f * k), Decor.Far);
                     return;
                 }
                 Piece("Гора", sphere, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), new Vector3(r * 2f, r * 2f * h, r * 2f * RandRange(0.8f, 1.2f)),
@@ -1765,24 +1961,40 @@ namespace JunkRace
             if (rng.NextDouble() < 0.1)
             {
                 float r = RandRange(12f, 22f);
-                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r + RandRange(12f, 35f));
-                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f) && !InRiver(p, r))
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 1.3f + RandRange(12f, 35f));
+                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 1.25f) && !InRiver(p, r * 1.25f))
                 {
                     float h = RandRange(0.8f, 1.3f);
-                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f - r * 0.15f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
                           new Vector3(r * 2f, r * 1.6f * h, r * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
                 }
             }
             if (rng.NextDouble() < 0.1)
             {
                 float r = RandRange(25f, 45f);
-                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 0.8f + RandRange(20f, 60f));
-                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 0.9f) && !InRiver(p, r))
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 1.3f + RandRange(20f, 60f));
+                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 1.25f) && !InRiver(p, r * 1.25f))
                 {
                     float h = RandRange(1f, 1.5f);
-                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f - r * 0.15f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
                           new Vector3(r * 2f, r * 1.6f * h, r * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Препятствие прямо на дороге — кучка мусора (бочки, покрышки, мешки), твёрдая.
+        /// Деревья на дороге убраны: мешали больше, чем веселили. Нет моделей мусора — валун.
+        /// </summary>
+        void RoadJunk(Vector3 at, float groundY)
+        {
+            if (!Any(junkModels)) { Boulder(new Vector3(at.x, groundY + 0.5f, at.z), 0.7f, true); return; }
+            int n = rng.Next(2, 4);
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 p = at + new Vector3(RandRange(-0.8f, 0.8f), 0f, RandRange(-0.8f, 0.8f));
+                p.y = groundY;
+                Model(junkModels, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * RandRange(0.65f, 0.95f), Decor.Solid, true);
             }
         }
 
@@ -1873,7 +2085,7 @@ namespace JunkRace
                 // и ставим низом на землю (центр шара-коллайдера поднят на 0.4r в поле и на 0.7r на дороге).
                 float ground = at.y - r * (onRoad ? 0.7f : 0.4f);
                 float height = r * 1.7f;
-                Model(rockModels, new Vector3(at.x, ground + height * 0.5f - r * 0.05f, at.z), Quaternion.Euler(0f, rot.eulerAngles.y, 0f),
+                Model(rockModels, new Vector3(at.x, ground + height * 0.5f, at.z), Quaternion.Euler(0f, rot.eulerAngles.y, 0f),
                       new Vector3(r * 2.1f, height, r * 1.9f), onRoad ? Decor.Solid : Decor.Small);
             }
         }
