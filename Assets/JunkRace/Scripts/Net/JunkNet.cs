@@ -635,6 +635,12 @@ namespace JunkRace
             // Сид трассы — первым: клиент построит ту же самую.
             w.WriteValueSafe(RouteGenerator.Seed);
             w.WriteValueSafe(RouteGenerator.Players);
+            // Гонка: спринт/кольцо, длина, круги — трассу клиент строит по ним же.
+            w.WriteValueSafe((byte)GameSession.Kind);
+            w.WriteValueSafe((byte)GameSession.Size);
+            w.WriteValueSafe((byte)GameSession.Laps);
+            w.WriteValueSafe((byte)GameSession.Shape);
+            w.WriteValueSafe((byte)GameSession.Biome);
 
             // Заезд: фаза, гонщики, кто уже финишировал.
             var timer = RaceTimer.Instance;
@@ -848,6 +854,12 @@ namespace JunkRace
         {
             r.ReadValueSafe(out int routeSeed);
             r.ReadValueSafe(out int players);
+            r.ReadValueSafe(out byte raceKind);
+            r.ReadValueSafe(out byte raceSize);
+            r.ReadValueSafe(out byte raceLaps);
+            r.ReadValueSafe(out byte raceShape);
+            r.ReadValueSafe(out byte raceBiome);
+            GameSession.ApplyRace((RaceKind)raceKind, (RaceSize)raceSize, raceLaps, (RaceShape)raceShape, (RaceBiome)raceBiome);
             if (RouteGenerator.Instance != null) RouteGenerator.Instance.ApplySeed(routeSeed, players);
 
             r.ReadValueSafe(out bool hasTimer);

@@ -207,18 +207,31 @@ namespace JunkRace.EditorTools
             var yardGround = Slab("Земля_свалки", yard, TrackStart, 0f, new Color(0.45f, 0.42f, 0.38f));
             DressYardGround(yardGround);
             float half = TrackWidth / 2f;
-            const float segment = 5f;
-            for (int s = -1; s <= 1; s += 2)
+            var fenceModel = ModelFitter.FindAll(RouteModelsFolder + "/Yard").Find(m => m.name == "yard_fence");
+            if (fenceModel != null)
             {
-                int i = 0;
-                for (float z = TrackStart; z < 0f; z += segment, i++)
-                    Box("Ограждение", yard, new Vector3(s * (half + 0.15f), 0.4f, z + segment / 2f), new Vector3(0.3f, 0.8f, segment),
-                        i % 2 == 0 ? new Color(0.85f, 0.15f, 0.1f) : Color.white);
+                // Забор из модели: коллайдеры — плиты вдоль сторон, вид — секции по ~4 м.
+                YardFence(yard, fenceModel, new Vector3(-half - 0.15f, 0f, TrackStart), new Vector3(-half - 0.15f, 0f, 0f));
+                YardFence(yard, fenceModel, new Vector3(half + 0.15f, 0f, 0f), new Vector3(half + 0.15f, 0f, TrackStart));
+                YardFence(yard, fenceModel, new Vector3(half + 0.15f, 0f, TrackStart - 0.15f), new Vector3(-half - 0.15f, 0f, TrackStart - 0.15f));
+                // Сужение к выезду: трасса начинается шириной 14 м.
+                YardFence(yard, fenceModel, new Vector3(-half - 0.15f, 0f, -0.15f), new Vector3(-7f, 0f, -0.15f));
+                YardFence(yard, fenceModel, new Vector3(7f, 0f, -0.15f), new Vector3(half + 0.15f, 0f, -0.15f));
             }
-            Box("Ограждение_зад", yard, new Vector3(0f, 0.4f, TrackStart - 0.15f), new Vector3(TrackWidth + 0.6f, 0.8f, 0.3f), new Color(0.85f, 0.15f, 0.1f));
-            // Сужение к выезду: трасса начинается шириной 14 м.
-            for (int s = -1; s <= 1; s += 2)
-                Box("Ограждение_выезд", yard, new Vector3(s * (7f + (half - 7f) / 2f), 0.4f, -0.15f), new Vector3(half - 7f, 0.8f, 0.3f), new Color(0.85f, 0.15f, 0.1f));
+            else
+            {
+                const float segment = 5f;
+                for (int s = -1; s <= 1; s += 2)
+                {
+                    int i = 0;
+                    for (float z = TrackStart; z < 0f; z += segment, i++)
+                        Box("Ограждение", yard, new Vector3(s * (half + 0.15f), 0.4f, z + segment / 2f), new Vector3(0.3f, 0.8f, segment),
+                            i % 2 == 0 ? new Color(0.85f, 0.15f, 0.1f) : Color.white);
+                }
+                Box("Ограждение_зад", yard, new Vector3(0f, 0.4f, TrackStart - 0.15f), new Vector3(TrackWidth + 0.6f, 0.8f, 0.3f), new Color(0.85f, 0.15f, 0.1f));
+                for (int s = -1; s <= 1; s += 2)
+                    Box("Ограждение_выезд", yard, new Vector3(s * (7f + (half - 7f) / 2f), 0.4f, -0.15f), new Vector3(half - 7f, 0.8f, 0.3f), new Color(0.85f, 0.15f, 0.1f));
+            }
 
             var gen = new GameObject("Генератор трассы").AddComponent<RouteGenerator>();
             gen.transform.position = Vector3.zero;
@@ -259,6 +272,42 @@ namespace JunkRace.EditorTools
             SetObjects(gen, "junkModels", RouteTemplates(box, "Other", up, tall, true, "barrel", "tire", "bag"));
             // Забор: вписан в коробку 1×1×0.25, длинной стороной вдоль X — генератор растягивает X на пролёт.
             SetObjects(gen, "fenceModels", FenceTemplates(box, "fence"));
+            // Арка старта/финиша и шлагбаум: вписаны в 1×1×0.5 (длинной стороной по X), низ на нуле.
+            SetObjects(gen, "archModels", RouteTemplates(box, "Gate", up, new Vector3(1f, 1f, 0.5f), false, "finish"));
+            SetObjects(gen, "boomModels", RouteTemplates(box, "Gate", up, new Vector3(1f, 1f, 0.5f), false, "boom"));
+        }
+
+        const float FenceHeight = 2.4f, FenceStep = 4f;
+
+        /// <summary>
+        /// Забор свалки от a до b: невидимая плита-коллайдер во всю длину и секции модели по ~4 м
+        /// (целое число, растянуты ровно на длину). Лицом наружу не важно — модель с двух сторон одинаковая.
+        /// </summary>
+        static void YardFence(Transform parent, GameObject model, Vector3 a, Vector3 b)
+        {
+            Vector3 dir = b - a;
+            float len = dir.magnitude;
+            if (len < 0.5f) return;
+            dir /= len;
+            var rot = Quaternion.LookRotation(Vector3.Cross(dir, Vector3.up), Vector3.up);   // X модели — вдоль забора
+            var wall = Box("Забор_коллайдер", parent, (a + b) / 2f + Vector3.up * FenceHeight / 2f, Vector3.one, Color.white);
+            wall.transform.rotation = rot;
+            wall.transform.localScale = new Vector3(len, FenceHeight, 0.3f);
+            Object.DestroyImmediate(wall.GetComponent<MeshRenderer>());
+            Object.DestroyImmediate(wall.GetComponent<MeshFilter>());
+            wall.isStatic = true;
+
+            int n = Mathf.Max(1, Mathf.RoundToInt(len / FenceStep));
+            float seg = len / n;
+            for (int i = 0; i < n; i++)
+            {
+                var t = new GameObject("Забор").transform;
+                t.SetParent(parent, false);
+                t.SetPositionAndRotation(a + dir * (seg * (i + 0.5f)), rot);
+                // Чуть внахлёст — без щелей между секциями.
+                ModelFitter.Attach(model, t, new Vector3(0f, FenceHeight / 2f, 0f), new Vector3(seg * 1.04f, FenceHeight, 0.35f), false);
+                foreach (var tr in t.GetComponentsInChildren<Transform>(true)) tr.gameObject.isStatic = true;
+            }
         }
 
         /// <summary>
@@ -296,6 +345,8 @@ namespace JunkRace.EditorTools
             Use("groundGrass", "grass");
             Use("roadSnow", "snow_road");
             Use("sideSnow", "snow_side");
+            Use("roadDesert", "desert_road");
+            Use("sideDesert", "desert_side");
             Use("groundSnow", "snow_ground");
 
             Use("groundMountain", "mountain_ground");

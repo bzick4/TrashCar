@@ -6,6 +6,18 @@ namespace JunkRace
 {
     public enum GameMode { Solo, Coop, UltraCoop }
 
+    /// <summary>Вид гонки: спринт — от свалки до финиша; кольцо — овал на хвостике от свалки, несколько кругов.</summary>
+    public enum RaceKind : byte { Sprint, Circuit }
+
+    /// <summary>Длина гонки (спринта) или одного круга (кольца).</summary>
+    public enum RaceSize : byte { Short, Medium, Long }
+
+    /// <summary>Форма кольца: овал или восьмёрка (ветки посередине пересекаются — одна по мосту над другой).</summary>
+    public enum RaceShape : byte { Oval, Eight }
+
+    /// <summary>Биом трассы: все вперемешку (рандом) или только один. Реки и тоннели есть в любом.</summary>
+    public enum RaceBiome : byte { Random, Forest, Desert, Mountains, Snow }
+
     /// <summary>Общие настройки сессии, живут между сценами.</summary>
     public static class GameSession
     {
@@ -14,6 +26,79 @@ namespace JunkRace
         public const int CoopMaxPlayers = 4;
 
         public static GameMode Mode = GameMode.Solo;
+
+        // ---- Настройки гонки (соло — свои, в коопе — от хоста) ----
+        public const int MaxLaps = 5;
+
+        // Читаем сохранённое лениво: PlayerPrefs нельзя трогать из статического конструктора (его может вызвать сериализация).
+        static bool raceLoaded;
+        static RaceKind kind;
+        static RaceSize size;
+        static int laps;
+        static RaceShape shape;
+        static RaceBiome biome;
+
+        static void LoadRace()
+        {
+            if (raceLoaded) return;
+            raceLoaded = true;
+            kind = (RaceKind)Mathf.Clamp(PlayerPrefs.GetInt("jr_race_kind", 0), 0, 1);
+            size = (RaceSize)Mathf.Clamp(PlayerPrefs.GetInt("jr_race_size", 1), 0, 2);
+            laps = Mathf.Clamp(PlayerPrefs.GetInt("jr_race_laps", 3), 1, MaxLaps);
+            shape = (RaceShape)Mathf.Clamp(PlayerPrefs.GetInt("jr_race_shape", 0), 0, 1);
+            biome = (RaceBiome)Mathf.Clamp(PlayerPrefs.GetInt("jr_race_biome", 0), 0, 4);
+        }
+
+        public static RaceKind Kind { get { LoadRace(); return kind; } set { LoadRace(); kind = value; } }
+        public static RaceSize Size { get { LoadRace(); return size; } set { LoadRace(); size = value; } }
+        public static int Laps { get { LoadRace(); return laps; } set { LoadRace(); laps = Mathf.Clamp(value, 1, MaxLaps); } }
+        public static RaceShape Shape { get { LoadRace(); return shape; } set { LoadRace(); shape = value; } }
+        /// <summary>Биом (в обучении — всегда лес).</summary>
+        public static RaceBiome Biome { get { LoadRace(); return IsTutorial ? RaceBiome.Forest : biome; } set { LoadRace(); biome = value; } }
+
+        /// <summary>Кольцо в этом заезде (в обучении — всегда спринт).</summary>
+        public static bool IsCircuit => Kind == RaceKind.Circuit && !IsTutorial;
+
+        public static void SaveRace()
+        {
+            PlayerPrefs.SetInt("jr_race_kind", (int)Kind);
+            PlayerPrefs.SetInt("jr_race_size", (int)Size);
+            PlayerPrefs.SetInt("jr_race_laps", Laps);
+            PlayerPrefs.SetInt("jr_race_shape", (int)Shape);
+            PlayerPrefs.SetInt("jr_race_biome", (int)biome);
+            PlayerPrefs.Save();
+        }
+
+        /// <summary>Настройки с хоста (клиент): только на этот заезд, свои сохранённые не трогаем.</summary>
+        public static void ApplyRace(RaceKind kind, RaceSize size, int laps, RaceShape shape, RaceBiome biome)
+        {
+            Biome = biome;
+            Kind = kind;
+            Size = size;
+            Laps = Mathf.Clamp(laps, 1, MaxLaps);
+            Shape = shape;
+        }
+
+        static readonly string[] SprintNames = { "Быстрый спринт", "Средний спринт", "Долгий спринт" };
+        static readonly string[] CircuitNames = { "Быстрое кольцо", "Среднее кольцо", "Большое кольцо" };
+        static readonly string[] SprintTimes = { "~2 мин", "3–4 мин", "5–6 мин" };
+        static readonly string[] CircuitTimes = { "1–2 мин", "2,5–3 мин", "4–5 мин" };
+
+        public static string SizeName(RaceKind kind, RaceSize size) => (kind == RaceKind.Sprint ? SprintNames : CircuitNames)[(int)size];
+        /// <summary>Сколько примерно ехать: спринт — весь заезд, кольцо — один круг.</summary>
+        public static string SizeTime(RaceKind kind, RaceSize size) => (kind == RaceKind.Sprint ? SprintTimes : CircuitTimes)[(int)size];
+
+        /// <summary>«Среднее кольцо · 3 круга» — для списка серверов, лобби и HUD.</summary>
+        public static string RaceLabel(RaceKind kind, RaceSize size, int laps, RaceShape shape, RaceBiome biome) =>
+            SizeName(kind, size) + (kind == RaceKind.Circuit ? (shape == RaceShape.Eight ? " · восьмёрка" : "") + $" · {laps} {LapWord(laps)}" : "")
+            + " · " + BiomeName(biome);
+
+        public static string RaceLabel() => RaceLabel(Kind, Size, Laps, Shape, Biome);
+
+        static readonly string[] BiomeNames = { "Рандом", "Лес", "Пустыня", "Горы", "Снег" };
+        public static string BiomeName(RaceBiome b) => BiomeNames[(int)b];
+
+        public static string LapWord(int n) => n % 10 == 1 && n % 100 != 11 ? "круг" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "круга" : "кругов";
 
         /// <summary>Сообщение, которое меню покажет после возврата (например, «Хост вышел»).</summary>
         public static string PendingMessage;
@@ -120,6 +205,7 @@ namespace JunkRace
             PendingMessage = message;
             DevRoom = false;
             Tutorial = false;
+            raceLoaded = false;   // в коопе были настройки хоста — в меню снова свои
             Time.timeScale = 1f;
 
             var nm = NetworkManager.Singleton;

@@ -163,6 +163,7 @@ namespace JunkRace
 
         void Update()
         {
+            if (Phase == MatchPhase.Race) TrackLaps();
             if (Phase == MatchPhase.Results && GameSession.CanRestart && !InGameMenu.Blocked && !GameSession.IsTutorial)
             {
                 bool again = (Keyboard.current != null && (Keyboard.current.enterKey.wasPressedThisFrame || Keyboard.current.numpadEnterKey.wasPressedThisFrame))
@@ -342,6 +343,133 @@ namespace JunkRace
             r.Parts = parts;
         }
 
+        // ============================ Кольцо: круги и чекпоинты ============================
+        // Считает каждый у себя (позиции машин у всех одни), финиш засчитывает только хост.
+        // Круг засчитан, когда машина пересекла линию круга, проехав все чекпоинты по порядку.
+
+        public class LapState
+        {
+            public int Lap;          // 0 — ещё не выехал на круг; 1..Laps — идёт этот круг
+            public int NextCp;       // какой чекпоинт следующий (= их число — можно на линию)
+            public float Prog = float.MinValue;   // последняя позиция на круге
+            public float Key = -1e9f;             // для мест: чем больше, тем дальше
+            public bool PastStart;                // проехал первый чекпоинт — заграждение на старте ему уже не нужно
+        }
+
+        readonly Dictionary<ulong, LapState> laps = new Dictionary<ulong, LapState>();
+        bool blockRemoving;
+        float lapTimer;
+
+        /// <summary>Свои круги (null — не кольцо или ещё не ехал).</summary>
+        public LapState MyLaps => laps.TryGetValue(World.LocalId, out var st) ? st : null;
+
+        /// <summary>Сообщение о круге/чекпоинте для своего игрока (HUD).</summary>
+        public string LapMessage { get; private set; }
+        public bool LapMessageBad { get; private set; }
+        float lapMessageUntil;
+        public bool LapMessageVisible => Time.time < lapMessageUntil;
+
+        void SayLap(ulong id, string text, bool bad = false)
+        {
+            if (id != World.LocalId) return;
+            LapMessage = text;
+            LapMessageBad = bad;
+            lapMessageUntil = Time.time + 2.2f;
+        }
+
+        void TrackLaps()
+        {
+            var route = RouteMap.Current;
+            if (route == null || !route.Circuit || route.Checkpoints == null) return;
+            lapTimer -= Time.deltaTime;
+            if (lapTimer > 0f) return;
+            lapTimer = 0.15f;   // поиск по маршруту не бесплатный
+            TrackLapsStep(route);
+            // Заграждение на старте — прочь, когда первый чекпоинт проехали все (ушедшие из игры не в счёт).
+            var block = RouteGenerator.Instance != null ? RouteGenerator.Instance.StartBlock : null;
+            if (block != null && !blockRemoving && racers.Count > 0)
+            {
+                bool all = true;
+                foreach (var r in racers)
+                    if (!r.Finished && VehicleOf(r.Id) != null && !(laps.TryGetValue(r.Id, out var s) && s.PastStart)) { all = false; break; }
+                if (all)
+                {
+                    blockRemoving = true;
+                    block.transform.DOScale(0.01f, 0.35f).SetEase(Ease.InBack).OnComplete(() => Destroy(block));
+                    // Все на круге — теперь перегораживаем хвостик к свалке, чтобы не свернуть туда на ходу.
+                    var tail = RouteGenerator.Instance.TailBlock;
+                    if (tail != null)
+                    {
+                        tail.SetActive(true);
+                        tail.transform.localScale = Vector3.one * 0.01f;
+                        tail.transform.DOScale(1f, 0.4f).SetEase(Ease.OutBack);
+                    }
+                }
+            }
+        }
+
+        void TrackLapsStep(RouteMap route)
+        {
+            float L = route.LapLength;
+            int n = route.Checkpoints.Length;
+            int total = GameSession.Laps;
+            foreach (var r in racers)
+            {
+                if (r.Finished) continue;
+                var v = VehicleOf(r.Id);
+                if (v == null) continue;
+                if (!laps.TryGetValue(r.Id, out var st)) laps[r.Id] = st = new LapState();
+                float lp = route.LapProgress(v.transform.position);
+                if (lp == float.MinValue) continue;
+                float prev = st.Prog;
+                bool onLap = lp >= 0f;
+                bool wasNear = prev != float.MinValue && (prev < 0f || prev > L - 70f);   // перед линией (или ещё на хвостике)
+
+                // Через линию вперёд: из конца круга (или с развилки) — в начало.
+                if (onLap && lp < 70f && wasNear)
+                {
+                    if (st.Lap == 0) { st.Lap = 1; st.NextCp = 0; SayLap(r.Id, $"Круг 1/{total}"); }
+                    else if (st.NextCp >= n)
+                    {
+                        st.Lap++;
+                        st.NextCp = 0;
+                        if (st.Lap > total)
+                        {
+                            if (Authority.IsAuthority) Finish(v);
+                            SayLap(r.Id, "Финиш!");
+                        }
+                        else SayLap(r.Id, st.Lap == total ? $"Последний круг! {st.Lap}/{total}" : $"Круг {st.Lap}/{total}");
+                    }
+                    else SayLap(r.Id, $"Пропущен чекпоинт {st.NextCp + 1} — круг не засчитан!", true);
+                }
+                // Назад через линию — круг откатывается (иначе туда-сюда через линию = лишний круг).
+                else if (onLap && prev >= 0f && prev < 70f && lp > L - 70f && st.Lap >= 1 && st.NextCp == 0)
+                {
+                    st.Lap--;
+                    st.NextCp = st.Lap >= 1 ? n : 0;
+                }
+
+                // Чекпоинты по порядку: засчитан, если проехал его (в пределах 80 м за ним).
+                if (st.Lap >= 1 && onLap)
+                    while (st.NextCp < n && lp >= route.Checkpoints[st.NextCp] && lp < route.Checkpoints[st.NextCp] + 80f)
+                    {
+                        st.NextCp++;   // пройденные не показываем — отвлекает; ругаемся только на пропущенный
+                    }
+
+                st.Prog = lp;
+                if (st.Lap >= 2 || st.NextCp >= 1) st.PastStart = true;
+                // Места: круги, потом сколько по кругу (но не дальше следующего чекпоинта — срезавшему не поможет).
+                if (st.Lap == 0) st.Key = onLap ? -1f : lp;
+                else
+                {
+                    float cap = st.NextCp < n ? route.Checkpoints[st.NextCp] + 80f : L;
+                    float along = onLap ? Mathf.Min(lp, cap) : 0f;
+                    if (st.NextCp == 0 && onLap && lp > L - 70f) along = 0f;   // ещё не отъехал от линии назад
+                    st.Key = (st.Lap - 1) * L + along;
+                }
+            }
+        }
+
         // ============================ Места ============================
 
         readonly List<(Racer r, float key)> order = new List<(Racer, float)>();
@@ -356,6 +484,7 @@ namespace JunkRace
             {
                 float key;
                 if (r.Finished) key = 1e9f - r.Time;
+                else if (route != null && route.Circuit) key = laps.TryGetValue(r.Id, out var st) ? st.Key : -1e9f;
                 else
                 {
                     var v = VehicleOf(r.Id);
@@ -432,6 +561,7 @@ namespace JunkRace
                     float t = Elapsed;
                     if (t < 1.2f) paint.Label(new Rect(0, h * 0.3f, w, 160), "ВПЕРЁД!", StyleBig);
                     placesTop = DrawRaceClock(t);
+                    DrawLapInfo(w, h);
                     DrawPlaces();
                     break;
                 }
@@ -787,7 +917,43 @@ namespace JunkRace
             }
         }
 
-        static Texture2D placesPanel;
+        static Texture2D placesPanel, lapPlate;
+
+        /// <summary>Кольцо: «КРУГ 2/3 · чекпоинт 1/4» под часами и всплывающие сообщения по центру.</summary>
+        void DrawLapInfo(float w, float h)
+        {
+            var route = RouteMap.Current;
+            if (route == null || !route.Circuit) return;
+            float k = h / 1080f;
+            var st = MyLaps;
+            int total = GameSession.Laps, n = route.Checkpoints != null ? route.Checkpoints.Length : 0;
+            int lap = st == null ? 0 : Mathf.Clamp(st.Lap, 0, total);
+            string text = lap == 0 ? $"КРУГ –/{total}" : $"КРУГ {lap}/{total}";
+            lapPlate ??= Resources.Load<Texture2D>("UI/hud/lap_plate");
+            if (lapPlate != null)
+            {
+                // Ржавая табличка, текст — тёмным по светлому полю.
+                float pw = 230f * k, ph = pw * lapPlate.height / lapPlate.width;
+                var plate = new Rect(16f * k, placesTop, pw, ph);
+                paint.Tex(plate, lapPlate);
+                var ink = new UiPainter.Style(Mathf.RoundToInt(24f * k), new Color(0.27f, 0.17f, 0.1f), TextAnchor.MiddleCenter, true, false);
+                paint.Label(plate, text, ink);
+                placesTop += ph + 4f * k;
+            }
+            else
+            {
+                var style = StyleLeft.With(Mathf.RoundToInt(22f * k)).WithBold(true);
+                paint.Box(new Rect(16f * k, placesTop, 200f * k, 40f * k), new Color(0f, 0f, 0f, 0.45f));
+                paint.Label(new Rect(28f * k, placesTop, 180f * k, 40f * k), text, style);
+                placesTop += 48f * k;
+            }
+
+            if (LapMessageVisible && !string.IsNullOrEmpty(LapMessage))
+            {
+                var big = new UiPainter.Style(Mathf.RoundToInt(44f * k), LapMessageBad ? new Color(1f, 0.45f, 0.35f) : new Color(1f, 0.8f, 0.3f), TextAnchor.MiddleCenter, true, false);
+                paint.Label(new Rect(0f, h * 0.22f, w, 70f * k), LapMessage, big);
+            }
+        }
 
         void DrawResults()
         {

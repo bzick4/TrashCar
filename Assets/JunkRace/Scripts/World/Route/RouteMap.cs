@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace JunkRace
 {
-    public enum Biome { Forest, Mountains, Snow }
+    public enum Biome { Forest, Mountains, Snow, Desert }
 
     /// <summary>Точка осевой линии дороги.</summary>
     public struct RouteSample
@@ -176,8 +176,44 @@ namespace JunkRace
             return found;
         }
 
-        /// <summary>Где на трассе финиш (прогресс, м от старта).</summary>
+        /// <summary>Где на трассе финиш (прогресс, м от старта). У кольца — линия круга.</summary>
         public float FinishProgress;
+
+        // ---- Кольцо ----
+        /// <summary>Трасса — кольцо (овал на хвостике от свалки).</summary>
+        public bool Circuit;
+        /// <summary>Прогресс у развилки: с него начинается круг (до него — хвостик от свалки).</summary>
+        public float LapStart;
+        /// <summary>Длина круга, м.</summary>
+        public float LapLength;
+        /// <summary>Прогресс линии круга (арка чуть дальше развилки).</summary>
+        public float LapLine;
+        /// <summary>Чекпоинты: расстояние по кругу от линии, м, по порядку.</summary>
+        public float[] Checkpoints;
+
+        /// <summary>
+        /// Где на круге: метры от линии круга по ходу, 0..LapLength. Отрицательное — ещё на хвостике (до развилки).
+        /// </summary>
+        public float LapProgress(Vector3 p)
+        {
+            float pr = Progress(p);
+            if (pr == float.MinValue) return float.MinValue;
+            if (pr < LapStart - 1f) return pr - LapStart - LapLength;   // хвостик и свалка: «до круга»
+            return Mathf.Repeat(pr - LapLine, LapLength);
+        }
+
+        /// <summary>Точка круга в d метрах от линии по ходу.</summary>
+        public RouteSample AtLap(float d)
+        {
+            float pr = LapStart + Mathf.Repeat(LapLine - LapStart + d, LapLength);
+            foreach (var path in Paths)
+            {
+                if (path.Length <= 0f || path.ProgressScale <= 0f) continue;
+                float local = (pr - path.StartProgress) / path.ProgressScale;
+                if (path.StartProgress >= LapStart - 0.5f && local >= 0f && local <= path.Length) return path.At(local);
+            }
+            return Start;
+        }
         /// <summary>Первая точка дороги после свалки (старт).</summary>
         public RouteSample Start;
 

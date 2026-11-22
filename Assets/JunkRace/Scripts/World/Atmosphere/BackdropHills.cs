@@ -21,6 +21,14 @@ namespace JunkRace
     {
         public static BackdropHills Instance { get; private set; }
 
+        /// <summary>
+        /// Трасса в одном биоме: холмы перекрашиваются под него (пустыня — песок и красный камень без леса,
+        /// снег — белые склоны). null — как в материале (трава, камень, снежные вершины).
+        /// </summary>
+        public static Biome? Look;
+        Material lookMaterial;
+        Biome? lookFor;
+
         [Header("Материалы (ставит меню JunkRace → Атмосфера)")]
         [SerializeField] Material terrainMaterial;
         [SerializeField] Material treeCrownMaterial;
@@ -146,13 +154,39 @@ namespace JunkRace
             }
 
             var mat = terrainMaterial != null ? terrainMaterial : FallbackTerrain();
+            mat = Tinted(mat);
             for (int r0 = 0; r0 < rows - 1; r0 += ChunkCells)
             for (int c0 = 0; c0 < cols - 1; c0 += ChunkCells)
                 BuildChunk(c0, r0, Mathf.Min(ChunkCells, cols - 1 - c0), Mathf.Min(ChunkCells, rows - 1 - r0), cell, mat);
 
             area = new Bounds(new Vector3((min.x + max.x) / 2f, farHeight / 2f, (min.y + max.y) / 2f),
                               new Vector3(max.x - min.x, farHeight * 2f + 50f, max.y - min.y));
-            ScatterTrees(seed, cell);
+            if (Look != Biome.Desert) ScatterTrees(seed, cell);   // в пустыне леса на холмах нет
+        }
+
+        /// <summary>Материал холмов в цветах выбранного биома (копия; исходный не трогаем).</summary>
+        Material Tinted(Material src)
+        {
+            if (Look == null || Look == Biome.Forest || Look == Biome.Mountains) return src;
+            if (lookMaterial == null || lookFor != Look)
+            {
+                if (lookMaterial != null) Destroy(lookMaterial);
+                lookMaterial = new Material(src) { name = src.name + "_" + Look };
+                lookFor = Look;
+                if (Look == Biome.Desert)
+                {
+                    lookMaterial.SetColor("_GrassColor", new Color(0.86f, 0.70f, 0.44f));
+                    lookMaterial.SetColor("_DryGrassColor", new Color(0.93f, 0.80f, 0.55f));
+                    lookMaterial.SetColor("_RockColor", new Color(0.72f, 0.42f, 0.28f));
+                    lookMaterial.SetColor("_SnowColor", new Color(0.95f, 0.84f, 0.62f));
+                }
+                else
+                {
+                    lookMaterial.SetColor("_GrassColor", new Color(0.90f, 0.93f, 0.98f));
+                    lookMaterial.SetColor("_DryGrassColor", new Color(0.84f, 0.88f, 0.95f));
+                }
+            }
+            return lookMaterial;
         }
 
         /// <summary>Высота рельефа в точке, d — расстояние до дороги.</summary>

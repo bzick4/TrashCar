@@ -73,6 +73,7 @@ namespace JunkRace
                 {
                     case Biome.Snow: k = r < 0.55 ? Kind.Snow : Kind.Blizzard; break;
                     case Biome.Forest: k = r < 0.45 ? Kind.Clear : r < 0.75 ? Kind.Rain : Kind.Wind; break;
+                    case Biome.Desert: k = r < 0.65 ? Kind.Clear : Kind.Wind; break;   // в пустыне — жара или ветер с песком
                     default: k = r < 0.45 ? Kind.Clear : r < 0.65 ? Kind.Rain : Kind.Wind; break;
                 }
                 kinds.Add(k);

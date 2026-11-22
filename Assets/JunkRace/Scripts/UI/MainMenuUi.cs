@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using DG.Tweening;
 
 namespace JunkRace
 {
@@ -36,7 +37,24 @@ namespace JunkRace
             }
         }
 
-        enum Screen { Main, Browser, Create, Password, Code, Busy, Lobby, Sound }
+        enum Screen { Main, Browser, Create, Password, Code, Busy, Lobby, Sound, Race, Biome }
+
+        /// <summary>Глубина экрана: вперёд (глубже) — старое окно уезжает влево, новое выезжает справа; назад — наоборот.</summary>
+        static int Depth(Screen s) => s switch
+        {
+            Screen.Main => 0,
+            Screen.Browser or Screen.Sound or Screen.Race => 1,
+            Screen.Create or Screen.Password or Screen.Code or Screen.Biome => 2,
+            Screen.Busy => 3,
+            _ => 4,
+        };
+
+        bool sliding;                  // окна в пути — новый экран построится, когда старое уедет
+        Vector2 mainHome, panelHome;   // где окна стоят на месте
+        const string SlideTween = "menu_slide";
+
+        /// <summary>Экран «Гонка» открыт из кооп-создания (в конце — создать сервер), иначе — соло.</summary>
+        bool raceForCoop;
 
         const float AutoRefreshInterval = 4f;
 
@@ -108,6 +126,8 @@ namespace JunkRace
             panel.sizeDelta = new Vector2(780f, 940f);
             Ui.Plate(panel, Ui.Load("panel"), new RectOffset(140, 140, 140, 140), new Color(0.20f, 0.18f, 0.16f, 0.97f));
             panelContent = Ui.Stretch(Ui.Node("Содержимое", panel), 74f, 74f, 74f, 74f);
+            mainHome = mainArea.anchoredPosition;
+            panelHome = panel.anchoredPosition;
 
             // Слой анимаций — поверх всего, клики не ловит.
             fxLayer = Ui.Stretch(Ui.Node("Анимации", canvas));
@@ -143,7 +163,7 @@ namespace JunkRace
                     RefreshServers();
             }
 
-            if (built != screen) Build();
+            if (built != screen && !sliding) Slide();
             foreach (var r in refreshers) r();
 
             fx?.Update(Time.unscaledDeltaTime);
@@ -209,11 +229,43 @@ namespace JunkRace
                 case Screen.Busy: BuildBusy(); break;
                 case Screen.Lobby: BuildLobby(); break;
                 case Screen.Sound: BuildSound(); break;
+                case Screen.Race: BuildRace(); break;
+                case Screen.Biome: BuildBiome(); break;
             }
             ErrorLine(content, false);
         }
 
         RectTransform content;   // узел текущего экрана на панели
+
+        /// <summary>
+        /// Смена экрана с анимацией (DOTween): старое окно уезжает за край экрана, потом строится новое
+        /// и выезжает с другой стороны с лёгким перелётом. Перестройка того же экрана (built = null) — без анимации.
+        /// </summary>
+        void Slide()
+        {
+            if (built == null) { Build(); return; }
+            var from = built.Value;
+            var to = screen;
+            float dir = Depth(to) < Depth(from) ? 1f : -1f;   // куда уезжает старое: назад — вправо, вперёд — влево
+            float w = canvas.rect.width + 200f;
+            var oldRt = from == Screen.Main ? mainArea : panel;
+            var oldHome = from == Screen.Main ? mainHome : panelHome;
+            sliding = true;
+            DOTween.Kill(SlideTween);
+            DOTween.To(() => oldRt.anchoredPosition, v => oldRt.anchoredPosition = v, oldHome + new Vector2(dir * w, 0f), 0.22f)
+                .SetEase(Ease.InCubic).SetUpdate(true).SetId(SlideTween)
+                .OnComplete(() =>
+                {
+                    oldRt.anchoredPosition = oldHome;
+                    Build();
+                    var newRt = to == Screen.Main ? mainArea : panel;
+                    var newHome = to == Screen.Main ? mainHome : panelHome;
+                    newRt.anchoredPosition = newHome - new Vector2(dir * w, 0f);
+                    DOTween.To(() => newRt.anchoredPosition, v => newRt.anchoredPosition = v, newHome, 0.32f)
+                        .SetEase(Ease.OutBack, 0.8f).SetUpdate(true).SetId(SlideTween)
+                        .OnComplete(() => sliding = false);
+                });
+        }
 
         void Show(Screen s)
         {
@@ -257,8 +309,9 @@ namespace JunkRace
             soloButton = Ui.Button(area, "Соло", "solo", Ui.Big, () =>
             {
                 if (Busy()) return;
-                if (fx != null && fx.Available) fx.LaunchWheel(GameSession.StartSolo);
-                else GameSession.StartSolo();
+                void Open() { raceForCoop = false; message = null; Show(Screen.Race); }
+                if (fx != null && fx.Available) fx.LaunchWheel(Open);
+                else Open();
             }, bw);
             Ui.Space(area, 8f);
             Ui.Button(area, "Обучение", null, Ui.Big, () => { if (!Busy()) GameSession.StartTutorial(); }, bw);
@@ -377,7 +430,7 @@ namespace JunkRace
             }
             Ui.Label(nameRow, s.HasPassword && lockTex == null ? s.Name + "   [пароль]" : s.Name, 28, ink, rowArt != null);
             string status = s.Started ? "идёт игра" : s.IsFull ? "полон" : "ждут игроков";
-            Ui.Label(info, $"{s.Players}/{s.MaxPlayers}  ·  {status}", 21, inkSoft);
+            Ui.Label(info, $"{s.Players}/{s.MaxPlayers}  ·  {status}" + (string.IsNullOrEmpty(s.Race) ? "" : $"  ·  {s.Race}"), 21, inkSoft);
             Ui.Space(row, 0f, true);
 
             var join = Ui.Button(row, "Войти", null, Ui.Small, () =>
@@ -390,6 +443,141 @@ namespace JunkRace
             }, 160f);
             join.Interactable = !s.Started && !s.IsFull;
             Ui.Space(list, 6f);
+        }
+
+        /// <summary>
+        /// Какая гонка: спринт или кольцо, длина (с примерным временем) и круги для кольца. Соло — «Поехали»,
+        /// хост — «Создать сервер» (настройки уйдут игрокам вместе с трассой). Выбор запоминается.
+        /// </summary>
+        void BuildRace()
+        {
+            Ui.Header(content, "Гонка");
+            var kind = GameSession.Kind;
+            void Redraw() { GameSession.SaveRace(); built = null; }
+            void Mark(Ui.UiButton b, bool on)
+            {
+                // Невыбранное — притушено, как закрытый режим в главном меню.
+                var c = on ? Color.white : new Color(0.55f, 0.55f, 0.55f, 1f);
+                b.Button.targetGraphic.color = c;
+                if (b.Icon != null) b.Icon.color = c;
+                if (!on) b.Text.color *= c;
+            }
+
+            var kinds = Ui.Node("Вид", content);
+            Ui.Row(kinds, 10f);
+            var sprint = Ui.Button(kinds, "Спринт", "sprint", Ui.Big, () => { GameSession.Kind = RaceKind.Sprint; Redraw(); });
+            var ring = Ui.Button(kinds, "Кольцо", "ring", Ui.Big, () => { GameSession.Kind = RaceKind.Circuit; Redraw(); });
+            Ui.Size(sprint.Rect, -1f, -1f, 1f);
+            Ui.Size(ring.Rect, -1f, -1f, 1f);
+            Mark(sprint, kind == RaceKind.Sprint);
+            Mark(ring, kind == RaceKind.Circuit);
+            Ui.Hint(content, kind == RaceKind.Sprint
+                ? "От ворот свалки — через лес, горы и снег — до финишной свалки."
+                : "Кольцо рядом со свалкой: несколько кругов, чекпоинты по пути. Восьмёрка — посередине мост над дорогой. Время — на один круг.");
+            Ui.Space(content, 12f);
+
+            Ui.Body(content, "Длина");
+            for (int i = 0; i < 3; i++)
+            {
+                var size = (RaceSize)i;
+                var b = Ui.Button(content, $"{GameSession.SizeName(kind, size)}  ·  {GameSession.SizeTime(kind, size)}", null, Ui.Small,
+                                  () => { GameSession.Size = size; Redraw(); });
+                Mark(b, GameSession.Size == size);
+                Ui.Space(content, 2f);
+            }
+
+            if (kind == RaceKind.Circuit)
+            {
+                Ui.Space(content, 10f);
+                var shapes = Ui.Node("Форма", content);
+                Ui.Row(shapes, 10f);
+                var oval = Ui.Button(shapes, "Овал", "ring", Ui.Small, () => { GameSession.Shape = RaceShape.Oval; Redraw(); });
+                var eight = Ui.Button(shapes, "Восьмёрка", "eight", Ui.Small, () => { GameSession.Shape = RaceShape.Eight; Redraw(); });
+                Ui.Size(oval.Rect, -1f, -1f, 1f);
+                Ui.Size(eight.Rect, -1f, -1f, 1f);
+                Mark(oval, GameSession.Shape == RaceShape.Oval);
+                Mark(eight, GameSession.Shape == RaceShape.Eight);
+                Ui.Space(content, 6f);
+                var lapRow = Ui.Node("Круги", content);
+                Ui.Row(lapRow, 10f);
+                Ui.Body(lapRow, "Кругов:");
+                Ui.Button(lapRow, "−", null, Ui.Small, () => { GameSession.Laps--; Redraw(); }, 90f).Interactable = GameSession.Laps > 1;
+                Ui.Label(lapRow, GameSession.Laps.ToString(), 36, Ui.Accent, true, TextAnchor.MiddleCenter);
+                Ui.Button(lapRow, "+", null, Ui.Small, () => { GameSession.Laps++; Redraw(); }, 90f).Interactable = GameSession.Laps < GameSession.MaxLaps;
+            }
+
+            Ui.Space(content, 0f, true);
+            Ui.Button(content, "Далее: местность", null, Ui.Big, () => { GameSession.SaveRace(); Show(Screen.Biome); });
+            Ui.Button(content, "Назад", "back", Ui.Big, () => { message = null; Show(raceForCoop ? Screen.Create : Screen.Main); });
+        }
+
+        /// <summary>
+        /// Местность: карточки биомов с картинками (Resources/UI/biome_*.png; нет картинки — плашка с названием).
+        /// «Рандом» — все биомы вперемешку. Реки и тоннели есть в любом.
+        /// </summary>
+        void BuildBiome()
+        {
+            Ui.Header(content, "Местность");
+            Ui.Hint(content, "Реки с мостами и тоннели — в любой. «Рандом» — всё вперемешку.");
+            Ui.Space(content, 8f);
+            var grid = Ui.Node("Карточки", content);
+            var gl = grid.gameObject.AddComponent<GridLayoutGroup>();
+            gl.cellSize = new Vector2(305f, 150f);
+            gl.spacing = new Vector2(12f, 12f);
+            gl.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            gl.constraintCount = 2;
+            Ui.Size(grid, -1f, 3f * 150f + 2f * 12f);
+            var order = new[] { RaceBiome.Random, RaceBiome.Forest, RaceBiome.Desert, RaceBiome.Mountains, RaceBiome.Snow };
+            foreach (var b in order) BiomeCard(grid, b);
+
+            Ui.Space(content, 0f, true);
+            if (raceForCoop)
+                Ui.Button(content, "Создать сервер", "key", Ui.Big, () =>
+                {
+                    GameSession.SaveRace();
+                    message = null;
+                    Session.Host(playerName, serverName, createPassword);
+                });
+            else
+                Ui.Button(content, "Поехали", "solo", Ui.Big, () => { GameSession.SaveRace(); GameSession.StartSolo(); });
+            Ui.Button(content, "Назад", "back", Ui.Big, () => { message = null; Show(Screen.Race); });
+        }
+
+        void BiomeCard(Transform parent, RaceBiome b)
+        {
+            bool on = GameSession.Biome == b;
+            var card = Ui.Node("Биом_" + b, parent);
+            var art = Ui.Load("biome_" + b.ToString().ToLowerInvariant());
+            // Рамка: выбранная — оранжевая, остальные — тёмные.
+            var frame = Ui.Image("Рамка", card, null, on ? Ui.Accent : new Color(0.12f, 0.11f, 0.1f, 1f));
+            Ui.Stretch(frame.rectTransform);
+            var pic = art != null ? (Graphic)Ui.Raw("Картинка", card, art) : Ui.Image("Картинка", card, null, new Color(0.3f, 0.27f, 0.24f));
+            Ui.Stretch(pic.rectTransform, 5f, 5f, 5f, 5f);
+            if (art != null) ((RawImage)pic).uvRect = CoverUv(art, 295f / 140f);
+            pic.color = on ? Color.white : new Color(0.6f, 0.6f, 0.6f, 1f);
+            // Подпись снизу на тёмной полосе.
+            var band = Ui.Image("Полоса", card, null, new Color(0f, 0f, 0f, 0.6f));
+            band.rectTransform.anchorMin = new Vector2(0f, 0f);
+            band.rectTransform.anchorMax = new Vector2(1f, 0f);
+            band.rectTransform.pivot = new Vector2(0.5f, 0f);
+            band.rectTransform.offsetMin = new Vector2(5f, 5f);
+            band.rectTransform.offsetMax = new Vector2(-5f, 47f);
+            var label = Ui.Label(band.transform, (art == null && b == RaceBiome.Random ? "? " : "") + GameSession.BiomeName(b), 28,
+                                 on ? Ui.Accent : Ui.Cream, true, TextAnchor.MiddleCenter);
+            Ui.Stretch(label.rectTransform);
+            var btn = card.gameObject.AddComponent<Button>();
+            btn.targetGraphic = frame;
+            var nav = btn.navigation; nav.mode = Navigation.Mode.None; btn.navigation = nav;
+            btn.onClick.AddListener(() => { GameSession.Biome = b; GameSession.SaveRace(); built = null; });
+        }
+
+        /// <summary>Картинку — заполнить рамку без растяжения (лишнее по краям обрезать).</summary>
+        static Rect CoverUv(Texture t, float aspect)
+        {
+            float ta = (float)t.width / t.height;
+            if (ta > aspect) { float w = aspect / ta; return new Rect((1f - w) / 2f, 0f, w, 1f); }
+            float h = ta / aspect;
+            return new Rect(0f, (1f - h) / 2f, 1f, h);
         }
 
         void BuildCreate()
@@ -406,7 +594,7 @@ namespace JunkRace
             Ui.Hint(content, $"Максимум игроков: {GameSession.CoopMaxPlayers}");
 
             Ui.Space(content, 0f, true);
-            Ui.Button(content, "Создать", "key", Ui.Big, () =>
+            Ui.Button(content, "Далее: гонка", "key", Ui.Big, () =>
             {
                 if (createPassword.Length > 0 && createPassword.Length < CoopSession.MinPasswordLength)
                 {
@@ -415,7 +603,8 @@ namespace JunkRace
                 }
                 SaveName();
                 message = null;
-                Session.Host(playerName, serverName, createPassword);
+                raceForCoop = true;
+                Show(Screen.Race);   // дальше — какая будет гонка, и там «Создать сервер»
             });
             Ui.Button(content, "Назад", "back", Ui.Big, () => { message = null; Show(Screen.Browser); });
         }
@@ -530,7 +719,8 @@ namespace JunkRace
                 header.text = s.ServerName;
                 tagText.text = $"Код: {s.JoinCode}";
                 copy.Text.text = copiedAt > Time.unscaledTime - 1.5f ? "Готово!" : "Копировать";
-                players.text = $"Игроки {s.Players.Count}/{GameSession.CoopMaxPlayers}";
+                string race = s.RaceLabel;
+                players.text = $"Игроки {s.Players.Count}/{GameSession.CoopMaxPlayers}" + (string.IsNullOrEmpty(race) ? "" : $"   ·   {race}");
                 for (int i = 0; i < slots.Count; i++)
                 {
                     var (host, name, ready, readyText) = slots[i];

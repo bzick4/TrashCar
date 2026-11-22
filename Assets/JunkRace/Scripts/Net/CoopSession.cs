@@ -20,6 +20,8 @@ namespace JunkRace
         public bool Started;
         public int Players;
         public int MaxPlayers;
+        /// <summary>«Среднее кольцо · 3 круга» (пусто — старый сервер без этого свойства).</summary>
+        public string Race;
         public bool IsFull => Players >= MaxPlayers;
     }
 
@@ -45,13 +47,14 @@ namespace JunkRace
         const string ReadyKey = "ready";
         const string PasswordFlagKey = "pw";
         const string VersionKey = "ver";
+        const string RaceKey = "race";   // «вид/длина/круги» — видно в списке серверов
 
         /// <summary>
         /// Версия для сети: в списке видны только сервера той же версии (иначе старая сборка с itch
         /// зайдёт к новой — и всё развалится). Меняется сама с версией игры (Player Settings → Version);
         /// NetProtocol — поднять вручную, если поменялось что-то сетевое, а версию забыли.
         /// </summary>
-        const int NetProtocol = 2;   // 2 — Relay по WebSocket (WSS)
+        const int NetProtocol = 3;   // 2 — Relay по WebSocket (WSS); 3 — настройки гонки (спринт/кольцо) в состоянии
         public static string NetVersion => Application.version + "/" + NetProtocol;
         const float StartCountdown = 3f;
 
@@ -171,6 +174,7 @@ namespace JunkRace
                         Started = s.IsLocked,
                         MaxPlayers = s.MaxPlayers,
                         Players = s.MaxPlayers - s.AvailableSlots,
+                        Race = RaceLabelOf(s.Properties),
                     });
                 }
             }
@@ -203,6 +207,7 @@ namespace JunkRace
                     {
                         { PasswordFlagKey, new SessionProperty(hasPassword ? "1" : "0", VisibilityPropertyOptions.Public) },
                         { VersionKey, new SessionProperty(NetVersion, VisibilityPropertyOptions.Public) },
+                        { RaceKey, new SessionProperty(RaceCode(), VisibilityPropertyOptions.Public) },
                     },
                 }.WithRelayNetwork().WithNetworkOptions(RelayNet());
 
@@ -453,6 +458,22 @@ namespace JunkRace
         /// Раньше был UDP: DTLS падал при сборке Burst'ом в редакторе на Mac.
         /// </summary>
         static NetworkOptions RelayNet() => new NetworkOptions { RelayProtocol = RelayProtocol.WSS };
+
+        static string RaceCode() => $"{(int)GameSession.Kind}/{(int)GameSession.Size}/{GameSession.Laps}/{(int)GameSession.Shape}/{(int)GameSession.Biome}";
+
+        /// <summary>«Среднее кольцо · 3 круга» из свойства сервера (пусто — не указано).</summary>
+        static string RaceLabelOf(IReadOnlyDictionary<string, SessionProperty> props)
+        {
+            if (props == null || !props.TryGetValue(RaceKey, out var p) || p == null || string.IsNullOrEmpty(p.Value)) return "";
+            var parts = p.Value.Split('/');
+            if (parts.Length != 5 || !int.TryParse(parts[0], out int k) || !int.TryParse(parts[1], out int sz) || !int.TryParse(parts[2], out int laps)
+                || !int.TryParse(parts[3], out int shape) || !int.TryParse(parts[4], out int biome)) return "";
+            return GameSession.RaceLabel((RaceKind)Mathf.Clamp(k, 0, 1), (RaceSize)Mathf.Clamp(sz, 0, 2), Mathf.Clamp(laps, 1, GameSession.MaxLaps),
+                                         (RaceShape)Mathf.Clamp(shape, 0, 1), (RaceBiome)Mathf.Clamp(biome, 0, 4));
+        }
+
+        /// <summary>Гонка этого сервера (в лобби): у хоста — свои настройки, у клиента — из свойств сервера.</summary>
+        public string RaceLabel => session != null ? RaceLabelOf(session.Properties) : "";
 
         static string VersionOf(IReadOnlyDictionary<string, SessionProperty> props) =>
             props != null && props.TryGetValue(VersionKey, out var v) && v != null ? v.Value : null;

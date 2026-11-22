@@ -44,6 +44,8 @@ namespace JunkRace
         [SerializeField] Material roadSnow;
         [SerializeField] Material sideSnow;
         [SerializeField] Material groundSnow;
+        [SerializeField] Material roadDesert;
+        [SerializeField] Material sideDesert;
         [SerializeField] Material groundMountain;
         [Tooltip("Песок пологих берегов реки (Textures/desert_ground.png; пусто — песочный цвет).")]
         [SerializeField] Material groundSand;
@@ -62,6 +64,10 @@ namespace JunkRace
         [SerializeField] GameObject[] blockModels;
         [SerializeField] GameObject[] junkModels;
         [SerializeField] GameObject[] fenceModels;
+        [Tooltip("Арка старта и финиша (Prefab/Route/Gate/finish): вписана в коробку 1×1×0.5, низ на нуле.")]
+        [SerializeField] GameObject[] archModels;
+        [Tooltip("Шлагбаум на выезде со свалки (Prefab/Route/Gate/boom): вписан в 1×1×0.5, низ на нуле, столб справа.")]
+        [SerializeField] GameObject[] boomModels;
 
         /// <summary>Переход дороги: на картинке сверху биом From, снизу — To.</summary>
         [System.Serializable]
@@ -126,7 +132,8 @@ namespace JunkRace
         static readonly Color SnowRoad = new Color(0.86f, 0.89f, 0.95f), SnowSide = new Color(0.7f, 0.76f, 0.86f);
         static readonly Color SnowWhite = new Color(0.8f, 0.85f, 0.93f);   // чуть приглушён: иначе сугроб пересвечен и без объёма
         /// <summary>Сабмешей у дороги: верх и откос на каждый биом.</summary>
-        const int RoadSubs = 3 * 2;
+        const int BiomeCount = 4;
+        const int RoadSubs = BiomeCount * 2;
 
         void Awake()
         {
@@ -175,11 +182,13 @@ namespace JunkRace
             {
                 var around = new List<Vector3>();
                 for (float z = -YardShuffle.YardDepth; z <= 80f; z += 10f) around.Add(transform.position + new Vector3(0f, 0f, z));
+                BackdropHills.Look = HillsLook;
                 BackdropHills.Instance.Build(around, seed);
             }
         }
 
         Transform tempRoot;
+        const float BoomZ = 3f;   // шлагбаум — сразу за аркой старта (у арки башни глубиной ~±1.8 м)
 
         /// <summary>
         /// Земля вокруг свалки (по бокам и сзади — там стоят крупные декорации) и, до постройки трассы,
@@ -188,24 +197,37 @@ namespace JunkRace
         void BuildSurroundings()
         {
             PreparePrimitives();
+            rng = new System.Random(Seed ^ 0x5EED);   // модели шлагбаума выбираются случайно — до трассы rng ещё нет
             Vector3 g = transform.position;
             const float far = 300f, yardHalf = YardShuffle.YardHalf, yardDepth = YardShuffle.YardDepth;
 
             root = new GameObject("Окрестности_свалки").transform;
             root.SetParent(transform, false);
             float zc = g.z - far / 2f;
-            GroundPiece("Земля_Л", new Vector3(g.x - yardHalf - far / 2f, GroundY - 1f, zc), new Vector3(far, 2f, far));
-            GroundPiece("Земля_П", new Vector3(g.x + yardHalf + far / 2f, GroundY - 1f, zc), new Vector3(far, 2f, far));
+            GroundPiece("Земля_Л", new Vector3(g.x - yardHalf - far / 2f, GroundY - 1f, zc), new Vector3(far, 2f, far), BaseBiome);
+            GroundPiece("Земля_П", new Vector3(g.x + yardHalf + far / 2f, GroundY - 1f, zc), new Vector3(far, 2f, far), BaseBiome);
             float backLen = far - yardDepth;
-            GroundPiece("Земля_Зад", new Vector3(g.x, GroundY - 1f, g.z - yardDepth - backLen / 2f), new Vector3(yardHalf * 2f, 2f, backLen));
+            GroundPiece("Земля_Зад", new Vector3(g.x, GroundY - 1f, g.z - yardDepth - backLen / 2f), new Vector3(yardHalf * 2f, 2f, backLen), BaseBiome);
 
             // Временное — до трассы.
             tempRoot = new GameObject("До_старта").transform;
             tempRoot.SetParent(transform, false);
             root = tempRoot;
-            GroundPiece("Земля_впереди", new Vector3(g.x, GroundY - 1f, g.z + 40f - 0.5f), new Vector3(yardHalf * 2f + far * 2f, 2f, 80f));
-            Piece("Шлагбаум", cube, new Vector3(g.x, 0.6f, g.z + 0.6f), Quaternion.identity, new Vector3(14f, 1.2f, 0.4f), new Color(0.9f, 0.15f, 0.1f), Col.Box);
-            Piece("Шлагбаум_полоса", cube, new Vector3(g.x, 0.6f, g.z + 0.38f), Quaternion.identity, new Vector3(14.02f, 0.3f, 0.02f), Color.white, Col.None);
+            GroundPiece("Земля_впереди", new Vector3(g.x, GroundY - 1f, g.z + 40f - 0.5f), new Vector3(yardHalf * 2f + far * 2f, 2f, 80f), BaseBiome);
+            var boom = Piece("Шлагбаум", cube, new Vector3(g.x, 0.6f, g.z + BoomZ), Quaternion.identity, new Vector3(14f, 1.2f, 0.4f), new Color(0.9f, 0.15f, 0.1f), Col.Box);
+            if (Any(boomModels))
+            {
+                // Два шлагбаума навстречу: столбы по краям выезда, стрелы сходятся посередине. Коробка — только коллайдер.
+                Hidden(boom);
+                const float reach = 7.4f, height = 3.4f;
+                for (int k = -1; k <= 1; k += 2)
+                {
+                    var rot = Quaternion.Euler(0f, k < 0 ? 180f : 0f, 0f);   // в модели столб справа: левый шлагбаум развёрнут
+                    Model(boomModels, new Vector3(g.x + k * reach / 2f, 0f, g.z + BoomZ), rot, new Vector3(reach, height, 0.9f * 2f), Decor.Solid);
+                }
+            }
+            else
+                Piece("Шлагбаум_полоса", cube, new Vector3(g.x, 0.6f, g.z + BoomZ - 0.22f), Quaternion.identity, new Vector3(14.02f, 0.3f, 0.02f), Color.white, Col.None);
             root = null;
         }
 
@@ -239,8 +261,19 @@ namespace JunkRace
             SectionBiomes.Clear();
             rivers.Clear();
             canyons.Clear();
-            zones.Clear();
+            zones = new List<(float z, Biome biome)>();
+            zonesLeft.Clear();
+            zonesRight.Clear();
             routeLength = 0f;
+            routeGoal = 0f;
+            circuit = false;
+            laneHalf = 0f;
+            riversBefore = 0;
+            legXMin = -1e9f;
+            legXMax = 1e9f;
+            circuitMarks.Clear();
+            underBridge.Clear();
+            forksAllowed = true;
             map = new RouteMap { OffMargin = offRouteMargin };
             root = new GameObject("Маршрут").transform;
             root.SetParent(transform, false);
@@ -257,7 +290,7 @@ namespace JunkRace
             pos = transform.position;
             yaw = 0f;
             width = 14f;
-            biome = Biome.Forest;
+            biome = BaseBiome;
             yard.StartProgress = -yard.Length;
             main = map.NewPath("Дорога");
             AddSample(main);
@@ -265,48 +298,47 @@ namespace JunkRace
             Gate(pos, 0f, 14f, new Color(0.95f, 0.75f, 0.15f));
             Run(main, 24f, 0f, 0f, ForestWidth);
 
-            // Участки: 3–4 штуки. Первые три — все биомы в случайном порядке (каждый есть на каждой трассе),
-            // четвёртый — любой, кроме предыдущего. В каждом 2–3 куска и, может, развилка.
-            int sections = 3 + rng.Next(2);
-            var order = new List<Biome> { Biome.Forest, Biome.Mountains, Biome.Snow };
+            // Участки. Первые три — все биомы в случайном порядке (каждый есть на каждой трассе), дальше — любой,
+            // кроме предыдущего. Участков столько, чтобы набрать длину, выбранную перед гонкой; в каждом 1–3 куска.
+            var order = BiomePool();
             Shuffle(order);
             test = TestRoute;
             bool tutorial = GameSession.IsTutorial;
-            if (tutorial) { sections = 1; order = new List<Biome> { Biome.Forest }; test = false; }   // обучение: короткий лес
-            else if (test) { sections = 3; order = new List<Biome> { Biome.Forest, Biome.Snow, Biome.Mountains }; }   // сперва вода: брод, мост, потом тоннель
-            else if (sections > 3)
-            {
-                var b4 = (Biome)rng.Next(3);
-                if (b4 == order[2]) b4 = (Biome)(((int)b4 + 1 + rng.Next(2)) % 3);
-                order.Add(b4);
-            }
+            int fixedSections = 0;
+            if (tutorial) { fixedSections = 1; order = new List<Biome> { Biome.Forest }; test = false; }   // обучение: короткий лес
+            else if (test) { fixedSections = 3; order = new List<Biome> { Biome.Forest, Biome.Snow, Biome.Mountains }; }   // сперва вода: брод, мост, потом тоннель
             var names = new List<string>();
-            for (int i = 0; i < sections; i++)
+            circuit = GameSession.IsCircuit && !test;
+            map.Circuit = circuit;
+            if (circuit) BuildCircuit(names);
+            else
             {
-                var b = order[i];
-                biome = b;
-                names.Add(b == Biome.Forest ? "Лес" : b == Biome.Mountains ? "Горы" : "Снег");
-                SectionStarts.Add(main.StartProgress + main.Length);
-                zones.Add((pos.z, b));
-                SectionBiomes.Add(b);
-                bool fork = forks == 0 && i == sections - 1 || rng.NextDouble() < 0.6;   // хотя бы одна развилка
-                int chunks = 2 + rng.Next(2);
-                if (tutorial) { TutorialForest(); continue; }
-                switch (b)
+                float target = SprintTarget[(int)GameSession.Size];
+                routeGoal = target;
+                for (int i = 0; ; i++)
                 {
-                    case Biome.Forest: BuildForest(chunks, fork); break;
-                    case Biome.Mountains: BuildMountains(chunks, fork); break;
-                    default: BuildSnow(chunks, fork); break;
+                    if (fixedSections > 0 ? i >= fixedSections : i >= 1 && routeLength >= target - 80f) break;
+                    var b = NextBiome(order, i);
+                    biome = b;
+                    names.Add(BiomeName(b));
+                    SectionStarts.Add(main.StartProgress + main.Length);
+                    zones.Add((pos.z, b));
+                    SectionBiomes.Add(b);
+                    float left = target - routeLength;
+                    bool fork = rng.NextDouble() < 0.6 || forks == 0 && left < 700f;   // хотя бы одна развилка
+                    int chunks = fixedSections > 0 ? 2 + rng.Next(2) : Mathf.Clamp(Mathf.RoundToInt((left - SectionOverhead(b)) / 90f), 1, 3);
+                    if (tutorial) { TutorialForest(); continue; }
+                    BuildSection(b, chunks, fork);
                 }
+
+                // Финиш и площадка после него.
+                Run(main, 30f, RandRange(-10f, 10f), -Mathf.Min(pos.y, 4f));
+                var end = main.Last;
+                map.FinishProgress = main.StartProgress + main.Length;
+                Finish(end);
+                Run(main, 30f, 0f, 0f);
             }
             ApplySun();
-
-            // Финиш и площадка после него.
-            Run(main, 30f, RandRange(-10f, 10f), -Mathf.Min(pos.y, 4f));
-            var end = main.Last;
-            map.FinishProgress = main.StartProgress + main.Length;
-            Finish(end);
-            Run(main, 30f, 0f, 0f);
 
             foreach (var p in map.Paths) p.SmoothForwards();
             foreach (var c in canyons) c.Fill();   // профиль ущелий — до декора: ему нужно знать, где низина
@@ -314,7 +346,9 @@ namespace JunkRace
             foreach (var f in forkFills) BuildForkFill(f.left, f.right);
             forkFills.Clear();
             Decorate();
+            if (circuit) CircuitRidge();
             BuildGround();
+            if (circuit) FinishCircuit();
 
             StaticBatchingUtility.Combine(root.gameObject);
             RouteMap.Current = map;
@@ -325,12 +359,537 @@ namespace JunkRace
             {
                 var points = new List<Vector3>();
                 foreach (var p in map.Paths) foreach (var s in p.Samples) points.Add(s.Pos);
+                BackdropHills.Look = HillsLook;
                 BackdropHills.Instance.Build(points, seed);
             }
 
+            if (circuit) CircuitSections();   // участки по ходу круга — для погоды
             Weather.Begin(map, SectionStarts, SectionBiomes, seed);
 
-            Summary = $"Маршрут: {string.Join(" → ", names)} · развилок: {forks} · ~{Mathf.RoundToInt(routeLength / 10f) * 10} м · сид {seed}";
+            Summary = circuit
+                ? $"Кольцо: {string.Join(" → ", names)} · круг ~{Mathf.RoundToInt(map.LapLength / 10f) * 10} м × {GameSession.Laps} · сид {seed}"
+                : $"Маршрут: {string.Join(" → ", names)} · развилок: {forks} · ~{Mathf.RoundToInt(routeLength / 10f) * 10} м · сид {seed}";
+            Debug.Log("[JunkRace] " + Summary);
+        }
+
+        // ============================ Длина гонки ============================
+
+        /// <summary>
+        /// Расчётная средняя скорость машины из хлама с препятствиями, м/с: по ней длина трассы под выбранное время.
+        /// Обучение (~750 м) проходится примерно за 2 минуты.
+        /// </summary>
+        const float DesignSpeed = 6.5f;
+        /// <summary>Спринт: быстрый ~2 мин, средний 3–4, долгий 5–6.</summary>
+        static readonly float[] SprintTarget = { 120f * DesignSpeed, 210f * DesignSpeed, 330f * DesignSpeed };
+        /// <summary>Кольцо, один круг: быстрое 1–2 мин, среднее 2,5–3, большое 4–5.</summary>
+        static readonly float[] LapTarget = { 90f * DesignSpeed, 165f * DesignSpeed, 270f * DesignSpeed };
+
+        static string BiomeName(Biome b) => b == Biome.Forest ? "Лес" : b == Biome.Mountains ? "Горы" : b == Biome.Desert ? "Пустыня" : "Снег";
+
+        /// <summary>Биомы трассы: выбранный один или все (рандом).</summary>
+        static List<Biome> BiomePool()
+        {
+            var pick = GameSession.Biome;
+            if (pick != RaceBiome.Random) return new List<Biome> { ToBiome(pick) };
+            return new List<Biome> { Biome.Forest, Biome.Mountains, Biome.Snow, Biome.Desert };
+        }
+
+        static Biome ToBiome(RaceBiome b) => b == RaceBiome.Mountains ? Biome.Mountains : b == RaceBiome.Snow ? Biome.Snow
+                                            : b == RaceBiome.Desert ? Biome.Desert : Biome.Forest;
+
+        /// <summary>Биом у свалки, на разворотах кольца и в переходе восьмёрки: выбранный, при рандоме — лес.</summary>
+        Biome BaseBiome => GameSession.Biome == RaceBiome.Random || GameSession.IsTutorial ? Biome.Forest : ToBiome(GameSession.Biome);
+
+        /// <summary>Холмы-задник в цветах биома, если трасса в одном биоме (рандом — как есть).</summary>
+        Biome? HillsLook => GameSession.Biome == RaceBiome.Random || GameSession.IsTutorial ? (Biome?)null : BaseBiome;
+
+        /// <summary>Следующий биом после prev: другой, если есть из чего выбрать.</summary>
+        Biome OtherBiome(Biome prev, List<Biome> pool)
+        {
+            if (pool.Count == 1) return pool[0];
+            Biome b;
+            do b = pool[rng.Next(pool.Count)]; while (b == prev);
+            return b;
+        }
+
+        static float BiomeWidth(Biome b) => b == Biome.Mountains ? MountainWidth : b == Biome.Snow ? SnowWidth : b == Biome.Desert ? DesertWidth : ForestWidth;
+
+        /// <summary>
+        /// Сколько метров участок добавляет сверх своих кусков: въезд, а в горах ещё подъём (70–140 м) и спуск
+        /// к равнине — без этого горное кольцо выходило в полтора раза длиннее заказанного.
+        /// </summary>
+        static float SectionOverhead(Biome b) => b == Biome.Mountains ? 260f : 60f;
+
+        /// <summary>Сколько трассы хотим (спринт — весь, кольцо — круг): по ней — где ставить обязательные тоннель и реку.</summary>
+        float routeGoal;
+
+        /// <summary>
+        /// На каждой трассе есть и ущелье с тоннелем, и река: если к трети пути тоннеля ещё не было — ставим его,
+        /// к половине без реки — реку. Возвращает true, если кусок поставлен (вместо случайного).
+        /// </summary>
+        bool Must(float w)
+        {
+            if (test || GameSession.IsTutorial || routeGoal <= 0f) return false;
+            float frac = routeLength / routeGoal;
+            if (canyons.Count == 0 && frac >= 0.3f) { CanyonCut(w); return true; }
+            if (rivers.Count == 0 && frac >= 0.5f && !riverInSection) { RiverCrossing(w); return true; }
+            return false;
+        }
+
+        /// <summary>Биом участка i: первые три — из перемешанного списка, дальше — любой, кроме предыдущего.</summary>
+        Biome NextBiome(List<Biome> order, int i)
+        {
+            if (i < order.Count) return order[i];
+            return OtherBiome(lastBiome, BiomePool());
+        }
+
+        Biome lastBiome => SectionBiomes.Count > 0 ? SectionBiomes[SectionBiomes.Count - 1] : Biome.Forest;
+
+        // ============================ Кольцо: овал на хвостике ============================
+        //
+        //            ┌──── дальний разворот ────┐
+        //   ветка «туда» (x − L)        ветка «обратно» (x + L)
+        //            └── ближний разворот ──────┘
+        //                     │ ← развилка J, линия круга — чуть дальше по ходу
+        //                 хвостик от ворот свалки
+        //
+        // Обе ветки строятся обычным генератором «вперёд по z» (реки, ущелья, земля полосами работают как
+        // в спринте), каждая — в своей полосе по x и на своей половине карты. Ветку «обратно» потом
+        // разворачиваем. Между ветками — каменная гряда: прячет шов земли и не даёт срезать.
+
+        bool circuit;
+        float laneX, laneHalf;           // полоса, в которой держится ветка (0 — без ограничения)
+        float legXMin = -1e9f, legXMax = 1e9f;   // реки этой ветки — только на её половине
+        readonly List<(float z, Biome biome)> zonesLeft = new List<(float, Biome)>(), zonesRight = new List<(float, Biome)>();
+        /// <summary>
+        /// Участки на кольце: начало и конец (как строили) и биом — после разворота пересчитаем в прогресс круга.
+        /// У развёрнутой ветки участок по ходу начинается там, где его строили последним.
+        /// </summary>
+        readonly List<(Vector3 from, Vector3 to, Biome biome, bool reversed)> circuitMarks = new List<(Vector3, Vector3, Biome, bool)>();
+        readonly List<(float z0, float z1)> ridges = new List<(float, float)>();   // где между ветками ставить гряду
+        /// <summary>Пути ветки «обратно»: строились «вперёд по z», развернём после постройки всего вида.</summary>
+        readonly List<RoutePath> toReverse = new List<RoutePath>();
+        /// <summary>Восьмёрка: нижняя дорога под мостом — опоры моста на неё не ставим.</summary>
+        readonly List<RouteSample> underBridge = new List<RouteSample>();
+
+        static readonly float[] LaneOffset = { 40f, 55f, 70f };   // полуширина овала по размеру круга, м
+        const float OverpassHeight = 6.5f;   // восьмёрка: настил моста над нижней дорогой, м
+        const float OverpassDeck = 26f;      // мост — столько метров в обе стороны от пересечения (дальше насыпь)
+        const float OverpassRamp = 38f;      // длина въезда на насыпь, м
+
+        struct Turtle { public RoutePath Main; public Vector3 Pos; public float Yaw, Width; public Biome Biome; }
+        Turtle Save() => new Turtle { Main = main, Pos = pos, Yaw = yaw, Width = width, Biome = biome };
+        void Load(Turtle t) { main = t.Main; pos = t.Pos; yaw = t.Yaw; width = t.Width; biome = t.Biome; }
+
+        void BuildCircuit(List<string> names)
+        {
+            int size = (int)GameSession.Size;
+            float L = LaneOffset[size];
+            float lapTarget = LapTarget[size];
+            bool eight = GameSession.Shape == RaceShape.Eight;
+            forksAllowed = size > 0;   // на быстром кольце ветки слишком близко — развилке негде разойтись
+            Vector3 g = transform.position;
+            ridges.Clear();
+            toReverse.Clear();
+            underBridge.Clear();
+
+            // Хвостик: прямо от ворот к развилке (дорога кольца проходит поперёк его конца).
+            Run(main, 14f, 0f, 0f, ForestWidth);
+            var tail = main;
+            Vector3 J = pos + Vector3.forward * (ForestWidth / 2f - 1f);   // хвостик заходит на дорогу кольца на метр
+            float T = tail.StartProgress + tail.Length + (ForestWidth / 2f - 1f);
+            float zs = J.z + L;   // центр ближнего разворота: отсюда начинаются ветки
+            float crossDz = Mathf.Max(150f, 1.6f * L);   // восьмёрка: длина перехода между полосами по z
+            float crossLen = eight ? 2f * Mathf.Sqrt(4f * L * L + crossDz * crossDz) : 0f;
+            float legTarget = Mathf.Max(110f, (lapTarget - 2f * Mathf.PI * L - crossLen) / 2f);
+            float xl = J.x - L, xr = J.x + L, mid = g.x;
+
+            // Ближний разворот, левая половина: от развилки (ход −x) к началу ветки А (ход +z).
+            var nearLeft = map.NewPath("Кольцо_разворот_1");
+            nearLeft.StartProgress = T;
+            Arc(nearLeft, new Vector3(J.x, 0f, zs), L, -90f, -180f);
+
+            routeGoal = lapTarget;
+            var orderA = BiomePool();
+            var orderB = new List<Biome>(orderA);
+            Shuffle(orderA);
+            Shuffle(orderB);
+            int iA = 0, iB = 0;
+
+            // Ветка А — по ходу «вверх»: начинается в левой полосе.
+            var aPath = map.NewPath("Кольцо_А");
+            aPath.StartProgress = nearLeft.StartProgress + nearLeft.Length;
+            StartLeg(aPath, xl, zs);
+            Part(xl, false, eight ? legTarget / 2f : legTarget, orderA, ref iA, names, false);
+            var a = Save();
+
+            // Ветка Б — строим тоже «вверх» (в правой полосе), по ней поедут вниз: потом развернём.
+            int bFirst = map.Paths.Count;
+            var bPath = map.NewPath("Кольцо_Б");
+            bPath.StartProgress = 0f;
+            StartLeg(bPath, xr, zs);
+            Part(xr, true, eight ? legTarget / 2f : legTarget, orderB, ref iB, names, true);
+            var b = Save();
+
+            if (eight)
+            {
+                // Низы веток — до одной высоты z, дальше переход наискосок: А — в правую полосу, Б — в левую.
+                float z1 = Mathf.Max(a.Pos.z, b.Pos.z);
+                Load(a); Extend(z1); a = Save();
+                Load(b); Extend(z1); b = Save();
+                float z2 = z1 + crossDz;
+                zonesLeft.Add((z1, BaseBiome));
+                zonesRight.Add((z1, BaseBiome));
+                ridges.Add((zs + 12f, z1 - 8f));
+
+                biome = BaseBiome;
+                int aFrom = a.Main.Samples.Count;
+                Hermite(a.Main, a.Pos, new Vector3(xr, g.y, z2), Vector3.forward * crossDz, Vector3.forward * crossDz, true);
+                int bFrom = b.Main.Samples.Count;
+                Hermite(b.Main, b.Pos, new Vector3(xl, g.y, z2), Vector3.forward * crossDz, Vector3.forward * crossDz, true);
+                Overpass(a.Main, aFrom, b.Main, bFrom);
+
+                // Верха веток: А — в правой полосе, Б — в левой.
+                Load(a); main = a.Main; pos = new Vector3(xr, g.y, z2); yaw = 0f; biome = BaseBiome;
+                Part(xr, true, legTarget / 2f, orderA, ref iA, names, false);
+                a = Save();
+                Load(b); main = b.Main; pos = new Vector3(xl, g.y, z2); yaw = 0f; biome = BaseBiome;
+                Part(xl, false, legTarget / 2f, orderB, ref iB, names, true);
+                b = Save();
+                float zEnd = Mathf.Max(a.Pos.z, b.Pos.z);
+                Load(a); Extend(zEnd); a = Save();
+                Load(b); Extend(zEnd); b = Save();
+                ridges.Add((z2 + 8f, zEnd - 10f));
+            }
+            else
+            {
+                float zEnd = Mathf.Max(a.Pos.z, b.Pos.z);
+                Load(a); Extend(zEnd); a = Save();
+                Load(b); Extend(zEnd); b = Save();
+                ridges.Add((zs + 12f, zEnd - 10f));
+            }
+            // За ветками — снова лес по всей ширине: дальний разворот пересекает шов половин.
+            zonesLeft.Add((a.Pos.z + 5f, BaseBiome));
+            zonesRight.Add((a.Pos.z + 5f, BaseBiome));
+            laneHalf = 0f;
+            legXMin = -1e9f; legXMax = 1e9f;
+            zones = zonesLeft;
+
+            // Дальний разворот: плавная «U» от конца ветки А (ход +z) к концу ветки Б (ход −z).
+            var far = map.NewPath("Кольцо_разворот_2");
+            far.StartProgress = a.Main.StartProgress + a.Main.Length * a.Main.ProgressScale;
+            biome = BaseBiome;
+            float k = Mathf.Abs(b.Pos.x - a.Pos.x) * 1.6f;
+            Hermite(far, a.Pos, b.Pos, Vector3.forward * k, Vector3.back * k, false);
+
+            // Ветка Б целиком (с развилками) — в прогресс по ходу «вниз»: конец постройки = начало по ходу.
+            float bLen = b.Main.StartProgress + b.Main.Length * b.Main.ProgressScale;
+            float baseP = far.StartProgress + far.Length;
+            for (int i = bFirst; i < map.Paths.Count; i++)
+            {
+                var p = map.Paths[i];
+                if (p == far) break;
+                p.StartProgress = baseP + (bLen - (p.StartProgress + p.Length * p.ProgressScale));
+                toReverse.Add(p);
+            }
+
+            // Ближний разворот, правая половина: от конца ветки Б (ход −z) к развилке (ход −x).
+            var nearRight = map.NewPath("Кольцо_разворот_3");
+            nearRight.StartProgress = baseP + bLen;
+            biome = BaseBiome;
+            Arc(nearRight, new Vector3(J.x, 0f, zs), L, 0f, -90f);
+            StartBlock = BuildBlock("Заграждение_старта", nearRight.At(nearRight.Length - 12f));
+            // Хвостик к свалке: перегородим, когда все уйдут на круг (до тех пор спрятано).
+            TailBlock = BuildBlock("Заграждение_хвостика", tail.At(tail.Length - 3f));
+            TailBlock.SetActive(false);
+
+            map.LapStart = T;
+            map.LapLength = nearRight.StartProgress + nearRight.Length - T;
+            map.LapLine = T + LapLineOffset;
+            map.FinishProgress = map.LapLine;
+
+            // Линия круга — арка на ближнем развороте, чуть дальше развилки по ходу.
+            var line = nearLeft.At(LapLineOffset);
+            float lineYaw = Mathf.Atan2(line.Forward.x, line.Forward.z) * Mathf.Rad2Deg;
+            Gate(line.Pos, lineYaw, line.HalfWidth * 2f + 2f, new Color(0.2f, 0.85f, 0.3f));
+
+            // Чекпоинты — поровну по кругу (между ними ~150–250 м).
+            int n = Mathf.Clamp(Mathf.RoundToInt(map.LapLength / 200f), 3, 8);
+            map.Checkpoints = new float[n];
+            for (int i = 0; i < n; i++) map.Checkpoints[i] = map.LapLength * (i + 1) / (n + 1);
+            forksAllowed = true;
+        }
+
+        bool forksAllowed = true;
+
+        /// <summary>
+        /// Кольцо: заграждение поперёк дороги сразу «против хода» от развилки — со старта не свернуть не туда.
+        /// Убирает RaceTimer, когда все гонщики проедут первый чекпоинт.
+        /// </summary>
+        public GameObject StartBlock { get; private set; }
+
+        /// <summary>
+        /// Кольцо: заграждение на хвостике у развилки — чтобы на круге не свернуть случайно к свалке.
+        /// Сначала спрятано; RaceTimer ставит его, когда убирает StartBlock (все уже на круге).
+        /// </summary>
+        public GameObject TailBlock { get; private set; }
+
+        /// <summary>Шлагбаумы навстречу поперёк дороги в точке s + невидимая стенка во всю ширину.</summary>
+        GameObject BuildBlock(string name, RouteSample s)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(transform, false);   // не в «Маршрут»: тот статически объединяется, а это уберём
+            var rot = Quaternion.LookRotation(s.Forward, Vector3.up);
+            go.transform.SetPositionAndRotation(s.Pos, rot);
+            float span = s.HalfWidth * 2f + 3f;
+            var col = go.AddComponent<BoxCollider>();
+            col.center = new Vector3(0f, 1.2f, 0f);
+            col.size = new Vector3(span, 2.4f, 0.6f);
+            if (Any(boomModels))
+            {
+                // Два шлагбаума навстречу (как на выезде со свалки); в модели столб справа — левый развёрнут.
+                float reach = span / 2f + 0.2f;
+                for (int k = -1; k <= 1; k += 2)
+                {
+                    var m = Model(boomModels, s.Pos + s.Right * k * reach / 2f, rot * Quaternion.Euler(0f, k < 0 ? 180f : 0f, 0f),
+                                  new Vector3(reach, 3.2f, 0.9f * 2f), Decor.Solid);
+                    m.transform.SetParent(go.transform, true);
+                    foreach (var t in m.GetComponentsInChildren<Transform>(true)) t.gameObject.isStatic = false;
+                }
+            }
+            else
+            {
+                var bar = Piece("Заграждение", cube, s.Pos + Vector3.up * 0.9f, rot, new Vector3(span, 1.2f, 0.4f), new Color(0.9f, 0.15f, 0.1f), Col.None);
+                bar.isStatic = false;
+                bar.transform.SetParent(go.transform, true);
+            }
+            return go;
+        }
+
+        /// <summary>Линия круга — столько метров по ходу от развилки (не на самом стыке с хвостиком).</summary>
+        const float LapLineOffset = 25f;
+
+        void StartLeg(RoutePath path, float x, float z)
+        {
+            main = path;
+            pos = new Vector3(x, transform.position.y, z);
+            yaw = 0f;
+            width = ForestWidth;
+            biome = BaseBiome;
+            AddSample(path);
+        }
+
+        /// <summary>Дотянуть ветку прямой до этого z (концы веток — на одной высоте).</summary>
+        void Extend(float z)
+        {
+            if (z - pos.z > 0.5f) Run(main, z - pos.z, -yaw, 0f, ForestWidth);
+        }
+
+        /// <summary>
+        /// Кусок ветки кольца в полосе laneCenter (своя половина карты — для рек, ущелий и земли): участки
+        /// биомов «вперёд по z», пока не наберётся длина; в конце — к земле и носом строго вперёд.
+        /// </summary>
+        void Part(float laneCenter, bool rightHalf, float target, List<Biome> order, ref int index, List<string> names, bool reversed)
+        {
+            laneX = laneCenter;
+            laneHalf = Mathf.Abs(laneCenter - transform.position.x) * 0.55f;
+            zones = rightHalf ? zonesRight : zonesLeft;
+            float mid = transform.position.x;
+            if (rightHalf) { legXMin = mid; legXMax = 1e9f; } else { legXMin = -1e9f; legXMax = mid; }
+            riversBefore = rivers.Count;
+            float start = routeLength;
+            if (target < 160f)
+            {
+                // Короткий кусок (восьмёрка небольшого круга): участка не набрать — просто дорога с поворотами.
+                float left = target;
+                while (left > 1f) { float len = Mathf.Min(left, RandRange(25f, 40f)); Run(main, len, RandRange(-20f, 20f), 0f, BiomeWidth(biome)); left -= len; }
+                laneHalf = 0f;
+                Run(main, 12f, -yaw, -pos.y, ForestWidth);
+                pos.y = transform.position.y;
+                return;
+            }
+            for (int i = 0; i == 0 || routeLength - start < target - 60f; i++, index++)
+            {
+                var bi = index < order.Count ? order[index] : OtherBiome(biome, BiomePool());
+                biome = bi;
+                names.Add(BiomeName(bi));
+                zones.Add((pos.z, bi));
+                Vector3 sectionFrom = pos;
+                int chunks = Mathf.Clamp(Mathf.RoundToInt((target - (routeLength - start) - SectionOverhead(bi)) / 90f), 1, 3);
+                bool fork = forksAllowed && rng.NextDouble() < 0.4;
+                BuildSection(bi, chunks, fork);
+                circuitMarks.Add((sectionFrom, pos, bi, reversed));
+            }
+            laneHalf = 0f;
+            while (pos.y > 3f) Run(main, 40f, RandRange(-10f, 10f), -Mathf.Min(pos.y - 1f, 8f), ForestWidth);
+            Run(main, 24f, -yaw, -pos.y, ForestWidth);   // ровно вперёд и на землю
+            pos.y = transform.position.y;
+        }
+
+        /// <summary>
+        /// Восьмёрка: переход ветки А поднимаем мостом над переходом ветки Б. Пересечение — где кривые ближе всего;
+        /// там настил (мост с перилами), по сторонам — насыпь с плавным въездом.
+        /// </summary>
+        void Overpass(RoutePath upper, int uFrom, RoutePath lower, int lFrom)
+        {
+            int bu = uFrom, bl = lFrom;
+            float best = float.MaxValue;
+            for (int i = uFrom; i < upper.Samples.Count; i++)
+                for (int j = lFrom; j < lower.Samples.Count; j++)
+                {
+                    Vector3 d = upper.Samples[i].Pos - lower.Samples[j].Pos;
+                    d.y = 0f;
+                    if (d.sqrMagnitude < best) { best = d.sqrMagnitude; bu = i; bl = j; }
+                }
+            float c = upper.Dist[bu];
+            for (int i = uFrom; i < upper.Samples.Count; i++)
+            {
+                float d = Mathf.Abs(upper.Dist[i] - c);
+                float t = Mathf.Clamp01((d - OverpassDeck) / OverpassRamp);
+                var s = upper.Samples[i];
+                s.Pos.y = transform.position.y + OverpassHeight * (1f - t * t * (3f - 2f * t));
+                s.Bridge = d <= OverpassDeck;
+                upper.Samples[i] = s;
+            }
+            for (int j = Mathf.Max(lFrom, bl - 25); j < Mathf.Min(lower.Samples.Count, bl + 25); j++) underBridge.Add(lower.Samples[j]);
+        }
+
+        /// <summary>Под мостом восьмёрки — нижняя дорога: опору сюда не ставим.</summary>
+        bool OnUnderpass(Vector3 p, float margin)
+        {
+            foreach (var s in underBridge)
+            {
+                Vector3 d = p - s.Pos;
+                d.y = 0f;
+                if (d.magnitude < s.HalfWidth + margin) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Дуга окружности (центр, радиус, углы от a0 к a1 в градусах; 0° — +x, −90° — −z), ровная, на земле.</summary>
+        void Arc(RoutePath path, Vector3 center, float r, float a0, float a1)
+        {
+            int steps = Mathf.Max(4, Mathf.CeilToInt(Mathf.Abs(a1 - a0) * Mathf.Deg2Rad * r / Step));
+            float sign = Mathf.Sign(a1 - a0);
+            for (int i = 0; i <= steps; i++)
+            {
+                float a = Mathf.Lerp(a0, a1, i / (float)steps) * Mathf.Deg2Rad;
+                var p = new Vector3(center.x + r * Mathf.Cos(a), transform.position.y, center.z + r * Mathf.Sin(a));
+                var f = new Vector3(-Mathf.Sin(a), 0f, Mathf.Cos(a)) * sign;
+                path.Add(new RouteSample { Pos = p, Forward = f.normalized, HalfWidth = ForestWidth / 2f, Road = true, Biome = biome });
+            }
+            routeLength += path.Length;
+        }
+
+        /// <summary>Кривая Эрмита из a в b с касательными m0, m1, по земле. skipFirst — a уже есть в пути (продолжаем его).</summary>
+        void Hermite(RoutePath path, Vector3 a, Vector3 b, Vector3 m0, Vector3 m1, bool skipFirst)
+        {
+            Vector3 P(float t)
+            {
+                float t2 = t * t, t3 = t2 * t;
+                return (2f * t3 - 3f * t2 + 1f) * a + (t3 - 2f * t2 + t) * m0 + (-2f * t3 + 3f * t2) * b + (t3 - t2) * m1;
+            }
+            float approx = 0f;
+            Vector3 prev = a;
+            for (int i = 1; i <= 50; i++) { var q = P(i / 50f); approx += Vector3.Distance(prev, q); prev = q; }
+            int steps = Mathf.Max(8, Mathf.CeilToInt(approx / Step));
+            for (int i = skipFirst ? 1 : 0; i <= steps; i++)
+            {
+                float t = i / (float)steps;
+                var p = P(t);
+                p.y = Mathf.Lerp(a.y, b.y, t);
+                var f = P(Mathf.Min(1f, t + 0.01f)) - P(Mathf.Max(0f, t - 0.01f));
+                f.y = 0f;
+                path.Add(new RouteSample { Pos = p, Forward = f.normalized, HalfWidth = ForestWidth / 2f, Road = true, Biome = biome });
+            }
+            routeLength += approx;
+            pos = b;
+            yaw = Mathf.Atan2(m1.x, m1.z) * Mathf.Rad2Deg;
+        }
+
+        /// <summary>Развернуть путь: точки в обратном порядке, направления — наоборот.</summary>
+        static void Reverse(RoutePath path)
+        {
+            var samples = new List<RouteSample>(path.Samples);
+            samples.Reverse();
+            var sf = path.StartForward;
+            path.StartForward = path.EndForward.HasValue ? -path.EndForward.Value : (Vector3?)null;
+            path.EndForward = sf.HasValue ? -sf.Value : (Vector3?)null;
+            path.Samples.Clear();
+            path.Dist.Clear();
+            foreach (var s0 in samples)
+            {
+                var s = s0;
+                s.Forward = -s.Forward;
+                path.Add(s);
+            }
+        }
+
+        /// <summary>Кольцо: каменная гряда между ветками (прячет шов земли половин и не даёт срезать).</summary>
+        void CircuitRidge()
+        {
+            float mid = transform.position.x;
+            if (!Any(rockModels)) return;
+            foreach (var (z0, z1) in ridges)
+                for (float z = z0; z < z1; z += RandRange(9f, 13f))
+                {
+                    var p = new Vector3(mid + RandRange(-3f, 3f), 0f, z);
+                    if (!map.Nearest(p, false, out var h)) continue;
+                    float r = Mathf.Min(13f, h.Distance - h.Sample.HalfWidth - 3f);   // не налезть на дорогу
+                    if (r < 3f) continue;
+                    float hgt = RandRange(1.1f, 1.6f) * r;
+                    // Образец камня — по центру единичного куба: поднимаем, чтобы утонул лишь чуть-чуть.
+                    Model(rockModels, p + Vector3.up * hgt * 0.35f, Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * 2f, hgt, r * 2f * RandRange(0.8f, 1.2f)), Decor.Solid, true);
+                }
+        }
+
+        /// <summary>
+        /// Кольцо после постройки вида: ветку Б разворачиваем (по ней едут вниз), ущелья на ней получают копию
+        /// пути как строили (тоннель считается по ней). Потом — вешки чекпоинтов (им нужен прогресс по ходу).
+        /// </summary>
+        void FinishCircuit()
+        {
+            foreach (var p in toReverse)
+            {
+                foreach (var c in canyons) if (c.Path == p) c.Path = Clone(p);
+                Reverse(p);
+            }
+            toReverse.Clear();
+
+            if (map.Checkpoints == null) return;
+            foreach (float cp in map.Checkpoints)
+            {
+                var s = map.AtLap(cp);
+                for (int k = -1; k <= 1; k += 2)
+                {
+                    Vector3 p = s.Pos + s.Right * k * (s.HalfWidth + 0.8f);
+                    if (Any(postModels)) Model(postModels, p, Quaternion.LookRotation(s.Forward), new Vector3(1.4f, 2.6f, 1.4f), Decor.Solid, true);
+                    else Piece("Чекпоинт_столб", cube, p + Vector3.up * 1.3f, Quaternion.identity, new Vector3(0.25f, 2.6f, 0.25f), Color.white, Col.Box);
+                    Piece("Чекпоинт_флаг", cube, p + Vector3.up * 2.4f + s.Forward * 0.45f, Quaternion.LookRotation(s.Right), new Vector3(0.05f, 0.55f, 0.8f),
+                          new Color(1f, 0.55f, 0.1f), Col.None);
+                }
+            }
+        }
+
+        static RoutePath Clone(RoutePath p)
+        {
+            var c = new RoutePath(p.Name) { StartProgress = p.StartProgress, ProgressScale = p.ProgressScale, BuildMesh = false };
+            foreach (var s in p.Samples) c.Add(s);
+            return c;
+        }
+
+        /// <summary>Кольцо: начала участков — в прогресс круга, по порядку (по ним погода).</summary>
+        void CircuitSections()
+        {
+            var list = new List<(float p, Biome b)>();
+            foreach (var m in circuitMarks) list.Add((map.Progress(m.reversed ? m.to : m.from), m.biome));
+            list.Sort((a, c) => a.p.CompareTo(c.p));
+            SectionStarts.Clear();
+            SectionBiomes.Clear();
+            SectionStarts.Add(0f);
+            SectionBiomes.Add(BaseBiome);   // хвостик и ближний разворот — биом свалки
+            foreach (var x in list) { SectionStarts.Add(x.p); SectionBiomes.Add(x.b); }
         }
 
         // ---------------- Биомы ----------------
@@ -344,8 +903,9 @@ namespace JunkRace
             for (int i = 0; i < chunks; i++)
             {
                 if (i == forkAt) ForestFork();
+                if (Must(ForestWidth)) continue;
                 // Река — не чаще одной на участок и не больше двух на трассу.
-                int kinds = CanRiver ? 6 : 5;
+                int kinds = CanRiver ? 7 : 6;
                 switch (rng.Next(kinds))
                 {
                     case 0: ForestRoadChunk(); break;
@@ -353,6 +913,7 @@ namespace JunkRace
                     case 2: ForestLogs(); break;
                     case 3: ForestHills(); break;
                     case 4: ForestSweep(); break;
+                    case 5: CanyonCut(ForestWidth); break;   // лесной овраг с тоннелем
                     default: RiverCrossing(ForestWidth); break;
                 }
             }
@@ -377,6 +938,7 @@ namespace JunkRace
             for (int i = 0; i < chunks; i++)
             {
                 if (i == forkAt) MountainFork();
+                if (Must(MountainWidth)) continue;
                 switch (rng.Next(CanRiver ? 6 : 5))
                 {
                     case 0: MountainSerpentine(); break;
@@ -392,8 +954,8 @@ namespace JunkRace
         }
 
         /// <summary>
-        /// Трасса обучения: один лес без рек и развилок, ~750 м — на собранной из хлама машине
-        /// это 1,5–2 минуты. Куски — все лесные по разу, чтобы попробовать и слалом, и брёвна, и горки.
+        /// Трасса обучения: один лес без рек и развилок, ~1 км — на собранной из хлама машине
+        /// это около 2–2,5 минут. Куски — все лесные по разу, чтобы попробовать и слалом, и брёвна, и горки.
         /// </summary>
         void TutorialForest()
         {
@@ -407,6 +969,10 @@ namespace JunkRace
             ForestSweep();
             ForestHills();
             ForestRoadChunk();
+            // +40%: обучение проходили и пешком — пусть заезд будет заметнее.
+            ForestSlalom();
+            ForestRoadChunk();
+            ForestSweep();
         }
 
         // ---------------- Куски леса ----------------
@@ -451,6 +1017,9 @@ namespace JunkRace
         {
             public float Zc, HalfW, RoadX, Amp, Freq, Phase, BankW;
             public Biome Biome;   // берега и вода — по биому участка
+            /// <summary>Кольцо: река только на своей половине карты (вторая ветка идёт по другой земле).</summary>
+            public float XMin, XMax;
+            public bool HasX(float x) => x >= XMin && x <= XMax;
 
             /// <summary>Середина русла на этом x: у дороги — ровно Zc, дальше изгиб нарастает.</summary>
             public float CenterZ(float x)
@@ -473,7 +1042,8 @@ namespace JunkRace
         bool riverInSection;
 
         /// <summary>Можно ли на этом участке реку: не больше одной на участок и двух на трассу.</summary>
-        bool CanRiver => rivers.Count < 2 && !riverInSection;
+        bool CanRiver => rivers.Count - riversBefore < 2 && !riverInSection;
+        int riversBefore;   // кольцо: реки считаем на каждой ветке свои
 
         /// <summary>
         /// Река поперёк дороги (в любом биоме): спуск к воде, брод, подъём на другой берег.
@@ -516,6 +1086,7 @@ namespace JunkRace
                 Zc = (w0 + w1) / 2f, HalfW = (w1 - w0) / 2f, RoadX = (x0 + x1) / 2f,
                 Amp = RandRange(6f, 10f), Freq = 2f * Mathf.PI / RandRange(90f, 150f), Phase = RandRange(0f, 2f * Mathf.PI),
                 BankW = RiverBank, Biome = biome,
+                XMin = legXMin, XMax = legXMax,
             });
             Run(main, 12f, 0f, 0f, width);
         }
@@ -524,7 +1095,7 @@ namespace JunkRace
         bool InRiver(Vector3 p, float margin = 1f)
         {
             // Вода и нижняя часть пляжа — без деревьев и кустов.
-            foreach (var r in rivers) if (Mathf.Abs(p.z - r.CenterZ(p.x)) < r.HalfW + r.BankW * 0.5f + margin) return true;
+            foreach (var r in rivers) if (r.HasX(p.x) && Mathf.Abs(p.z - r.CenterZ(p.x)) < r.HalfW + r.BankW * 0.5f + margin) return true;
             foreach (var c in canyons) if (c.Covers(p, margin)) return true;
             return false;
         }
@@ -533,7 +1104,7 @@ namespace JunkRace
         bool UnderWater(Vector3 p)
         {
             if (p.y >= WaterY + 0.2f) return false;
-            foreach (var r in rivers) if (Mathf.Abs(p.z - r.CenterZ(p.x)) < r.HalfW + 3f) return true;
+            foreach (var r in rivers) if (r.HasX(p.x) && Mathf.Abs(p.z - r.CenterZ(p.x)) < r.HalfW + 3f) return true;
             return false;
         }
 
@@ -626,6 +1197,8 @@ namespace JunkRace
         {
             public RoutePath Path;
             public int From, To;                  // точки пути: начало спуска и конец подъёма
+            public bool Right;                    // кольцо: на правой половине карты
+            public Biome Biome = Biome.Mountains; // земля и стены ущелья — по биому
             public float TunnelFrom, TunnelTo;    // тоннель: расстояния по пути
             public readonly List<RouteSample> Rows = new List<RouteSample>();
 
@@ -676,25 +1249,32 @@ namespace JunkRace
         readonly List<Canyon> canyons = new List<Canyon>();
 
         /// <summary>Ущелье: спуск ниже земли, дно между скалами (в середине тоннель), подъём обратно.</summary>
-        void MountainCanyon()
+        void MountainCanyon() => CanyonCut(MountainWidth);
+
+        /// <summary>
+        /// Ущелье с тоннелем — в любом биоме (земля и стены — его): спуск ниже земли, дно, в середине тоннель, подъём.
+        /// </summary>
+        void CanyonCut(float w)
         {
             // К земле (в горах дорога высоко), чуть выпрямиться — ущелье идёт вперёд.
-            while (pos.y > 3f) Run(main, 40f, RandRange(-12f, 12f), -Mathf.Min(pos.y - 1f, 8f), MountainWidth);
-            if (pos.y > 0.2f) Run(main, 14f, 0f, -pos.y, MountainWidth);
-            Run(main, 10f, -yaw * 0.5f, 0f, MountainWidth);
+            while (pos.y > 3f) Run(main, 40f, RandRange(-12f, 12f), -Mathf.Min(pos.y - 1f, 8f), w);
+            if (pos.y > 0.2f) Run(main, 14f, 0f, -pos.y, w);
+            Run(main, 10f, -yaw * 0.5f, 0f, w);
             int from = main.Samples.Count - 1;
             float depth = RandRange(6.5f, 8f);
-            Run(main, 34f, RandRange(-8f, 8f), -depth, MountainWidth, -depth);
+            Run(main, 34f, RandRange(-8f, 8f), -depth, w, -depth);
             float bottom0 = main.Length;
             float tunnel = RandRange(34f, 100f);   // длина тоннеля, м
-            Run(main, tunnel + 12f, RandRange(-14f, 14f), 0f, MountainWidth, -depth);
-            Run(main, 34f, RandRange(-8f, 8f), depth, MountainWidth, -depth);
+            Run(main, tunnel + 12f, RandRange(-14f, 14f), 0f, w, -depth);
+            Run(main, 34f, RandRange(-8f, 8f), depth, w, -depth);
             canyons.Add(new Canyon
             {
+                Right = legXMin > -1e8f,
+                Biome = biome,
                 Path = main, From = from, To = main.Samples.Count - 1,
                 TunnelFrom = bottom0 + 6f, TunnelTo = bottom0 + 6f + tunnel,
             });
-            Run(main, 10f, 0f, 0f, MountainWidth);
+            Run(main, 10f, 0f, 0f, w);
         }
 
         void MountainFork()
@@ -715,12 +1295,124 @@ namespace JunkRace
             else Fork(pool[0], pool[1], RandRange(100f, 130f));
         }
 
+        // ---------------- Участок: по биому ----------------
+
+        void BuildSection(Biome b, int chunks, bool fork)
+        {
+            switch (b)
+            {
+                case Biome.Forest: BuildForest(chunks, fork); break;
+                case Biome.Mountains: BuildMountains(chunks, fork); break;
+                case Biome.Desert: BuildDesert(chunks, fork); break;
+                default: BuildSnow(chunks, fork); break;
+            }
+        }
+
+        // ---------------- Пустыня ----------------
+
+        const float DesertWidth = 10f;
+        static readonly Color DesertRoad = new Color(0.78f, 0.64f, 0.45f), DesertSide = new Color(0.7f, 0.55f, 0.38f);
+
+        /// <summary>Пустыня: длинные прямые, дюны-горки, мусорный слалом, оазис-река, каньон с тоннелем.</summary>
+        void BuildDesert(int chunks, bool fork)
+        {
+            riverInSection = false;
+            Run(main, 20f, RandRange(-30f, 30f), -Mathf.Min(pos.y, 2f), DesertWidth);
+            int forkAt = fork ? rng.Next(0, chunks + 1) : -1;
+            for (int i = 0; i < chunks; i++)
+            {
+                if (i == forkAt) ForestFork();
+                if (Must(DesertWidth)) continue;
+                switch (rng.Next(CanRiver ? 6 : 5))
+                {
+                    case 0: DesertStraight(); break;
+                    case 1: DesertDunes(); break;
+                    case 2: DesertWrecks(); break;
+                    case 3: DesertSweep(); break;
+                    case 4: CanyonCut(DesertWidth); break;      // каньон с тоннелем в скале
+                    default: RiverCrossing(DesertWidth); break;  // река через оазис
+                }
+            }
+            if (forkAt == chunks) ForestFork();
+            while (pos.y > 2f) Run(main, 40f, RandRange(-15f, 15f), -Mathf.Min(pos.y, RandRange(6f, 9f)), DesertWidth);
+            Run(main, 12f, 0f, -pos.y, DesertWidth);
+        }
+
+        /// <summary>Длинная прямая — газ в пол.</summary>
+        void DesertStraight() => Run(main, 90f, RandRange(-18f, 18f), RandRange(-1f, 1f), DesertWidth);
+
+        /// <summary>Дюны: дорога волнами повыше лесных горок — на гребнях машины взлетают.</summary>
+        void DesertDunes()
+        {
+            float sign = rng.Next(2) == 0 ? 1f : -1f;
+            for (int i = 0; i < 5; i++, sign = -sign)
+                Run(main, RandRange(13f, 18f), RandRange(-12f, 12f), sign * RandRange(3f, 5.5f), DesertWidth);
+            if (pos.y > 1f) Run(main, 16f, 0f, -pos.y, DesertWidth);
+        }
+
+        /// <summary>Брошенный хлам на дороге: слалом между кучами мусора.</summary>
+        void DesertWrecks()
+        {
+            float start = main.Length;
+            float sign = rng.Next(2) == 0 ? 1f : -1f;
+            for (int i = 0; i < 3; i++, sign = -sign) Run(main, 22f, 20f * sign, 0f, DesertWidth + 2f);
+            int side = 1;
+            for (float d = start + 10f; d < main.Length - 6f; d += 11f, side = -side)
+            {
+                var s = main.At(d);
+                RoadJunk(s.Pos + s.Right * side * (s.HalfWidth - 2.4f), s.Pos.y);
+            }
+        }
+
+        /// <summary>Широкая дуга по равнине.</summary>
+        void DesertSweep()
+        {
+            float sign = rng.Next(2) == 0 ? 1f : -1f;
+            Run(main, 60f, 45f * sign, 0f, DesertWidth + 2f);
+            Run(main, 60f, -55f * sign, 0f, DesertWidth);
+        }
+
+        /// <summary>Пустыня у дороги: камни, сухие коряги, ржавый хлам, редкие кусты; подальше — скалы-столовые горы.</summary>
+        void DecorateDesert(RouteSample s, int side)
+        {
+            if (Any(stoneModels) && rng.NextDouble() < 0.35)
+                Scatter(stoneModels, s, side, 1f, 14f, 0.3f, 0.9f, 0.8f, true);
+            if (Any(stumpModels) && rng.NextDouble() < 0.12)
+                Scatter(stumpModels, s, side, 2f, 18f, 0.4f, 0.8f, 1f, true);
+            if (Any(bushModels) && rng.NextDouble() < 0.05)
+                Scatter(bushModels, s, side, 2f, 15f, 0.4f, 0.8f, 1f);
+            if (Any(junkModels) && rng.NextDouble() < 0.05)
+                Scatter(junkModels, s, side, 1.5f, 10f, 0.6f, 1f, 1f, true);
+            // Скалы средней дистанции и столовые горы на горизонте — вместо леса.
+            if (Any(rockModels) && rng.NextDouble() < 0.14)
+            {
+                float r = RandRange(3f, 8f);
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 1.2f + RandRange(8f, 40f));
+                p.y = GroundY;
+                if (map.IsClear(p, r * 1.15f) && !InRiver(p, r * 1.15f))
+                    Model(rockModels, new Vector3(p.x, GroundY + r * 0.7f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * 2.2f, r * 1.6f, r * 2f), Decor.Tree);
+            }
+            if (Any(rockModels) && rng.NextDouble() < 0.06)
+            {
+                float r = RandRange(14f, 30f);
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + r * 1.3f + RandRange(20f, 60f));
+                if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 1.25f) && !InRiver(p, r * 1.25f))
+                {
+                    float h = RandRange(0.35f, 0.6f);   // плоские — «столовые»
+                    Model(rockModels, new Vector3(p.x, GroundY + r * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * 2f, r * h * 1.6f, r * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
+                }
+            }
+            RoadsideExtras(s, side, false);
+        }
+
         // ---------------- Куски снега ----------------
 
         const float SnowWidth = 9f;
 
         /// <summary>Начало каждого участка по z и его биом (дорога идёт только вперёд по z): по ним земля.</summary>
-        readonly List<(float z, Biome biome)> zones = new List<(float, Biome)>();
+        List<(float z, Biome biome)> zones = new List<(float, Biome)>();
 
         void BuildSnow(int chunks, bool fork)
         {
@@ -739,12 +1431,14 @@ namespace JunkRace
             for (int i = 0; i < chunks; i++)
             {
                 if (i == forkAt) SnowFork();
-                switch (rng.Next(CanRiver ? 5 : 4))
+                if (Must(SnowWidth)) continue;
+                switch (rng.Next(CanRiver ? 6 : 5))
                 {
                     case 0: SnowRoadChunk(); break;
                     case 1: SnowDrifts(); break;
                     case 2: SnowPass(); break;
                     case 3: SnowWaves(); break;
+                    case 4: CanyonCut(SnowWidth); break;     // снежный каньон с тоннелем
                     default: RiverCrossing(SnowWidth); break;   // ледяная речка
                 }
             }
@@ -860,7 +1554,15 @@ namespace JunkRace
         void Run(RoutePath path, float length, float turn, float rise, float widthTo = -1f, float minY = 0f)
         {
             float yaw0 = yaw, y0 = pos.y, w0 = width, w1 = widthTo > 0f ? widthTo : width;
-            turn = Mathf.Clamp(yaw0 + turn, -MaxYaw, MaxYaw) - yaw0;
+            float lo = -MaxYaw, hi = MaxYaw;
+            if (laneHalf > 0f)
+            {
+                // Кольцо: ветка держится своей полосы — у края разрешён поворот только обратно к середине полосы.
+                float k = Mathf.Clamp((pos.x - laneX) / laneHalf, -1.5f, 1.5f);
+                if (k > 0f) hi = Mathf.Lerp(MaxYaw, -35f, Mathf.Clamp01(k));
+                else lo = Mathf.Lerp(-MaxYaw, 35f, Mathf.Clamp01(-k));
+            }
+            turn = Mathf.Clamp(yaw0 + turn, lo, hi) - yaw0;
             rise = Mathf.Clamp(y0 + rise, minY, MaxHeight) - y0;
             int steps = Mathf.Max(1, Mathf.CeilToInt(length / Step));
             float ds = length / steps;
@@ -951,6 +1653,7 @@ namespace JunkRace
             if (b.Kind == BranchKind.Tunnel)
                 canyons.Add(new Canyon
                 {
+                    Right = legXMin > -1e8f,
                     Path = path, From = 0, To = path.Samples.Count - 1,
                     TunnelFrom = path.Dist[Mathf.RoundToInt(n * 0.36f)], TunnelTo = path.Dist[Mathf.RoundToInt(n * 0.64f)],
                 });
@@ -1040,7 +1743,7 @@ namespace JunkRace
             int transCount = roadTransitions != null ? roadTransitions.Length : 0;
             // [биом*2 + 0] верх, [биом*2 + 1] откосы, дальше — переходы, настил моста (дерево), брод под водой (по биому).
             int bridgeSub = RoadSubs + transCount, fordSub = bridgeSub + 1;
-            var subs = new List<int>[fordSub + 3];
+            var subs = new List<int>[fordSub + BiomeCount];
             for (int i = 0; i < subs.Length; i++) subs[i] = new List<int>();
 
             // Стыки биомов на этом пути: участок длиной в ширину дороги (картинка не растянута) — картинкой-переходом.
@@ -1145,10 +1848,11 @@ namespace JunkRace
                 roadForest ? roadForest : Mat(ForestRoad), sideForest ? sideForest : Mat(ForestSide),
                 roadMountain ? roadMountain : Mat(MountainRoad), sideMountain ? sideMountain : Mat(MountainSide),
                 roadSnow ? roadSnow : Mat(SnowRoad), sideSnow ? sideSnow : Mat(SnowSide),
+                roadDesert ? roadDesert : Mat(DesertRoad), sideDesert ? sideDesert : Mat(DesertSide),
             };
             if (roadTransitions != null) foreach (var t in roadTransitions) mats.Add(t.Material);
             mats.Add(Mat(PortalWood));   // настил моста
-            for (int k = 0; k < 3; k++) mats.Add(BankMaterial((Biome)k, false));   // брод под водой
+            for (int k = 0; k < BiomeCount; k++) mats.Add(BankMaterial((Biome)k, false));   // брод под водой
             if (mats.Count > subs.Length) mats.RemoveRange(subs.Length, mats.Count - subs.Length);
             go.AddComponent<MeshRenderer>().sharedMaterials = mats.ToArray();
             go.AddComponent<MeshCollider>().sharedMesh = mesh;
@@ -1253,14 +1957,30 @@ namespace JunkRace
             var b = new Bounds(transform.position, Vector3.zero);
             foreach (var p in map.Paths) foreach (var s in p.Samples) b.Encapsulate(new Vector3(s.Pos.x, 0f, s.Pos.z));
             b.Expand(new Vector3(260f, 0f, 260f));
+            if (!circuit) { GroundIn(b, rivers, canyons); return; }
+
+            // Кольцо: у каждой ветки своя половина карты (свои реки, ущелья и биомы по z), шов — под каменной грядой.
+            float mid = transform.position.x;
+            var left = new Bounds(); left.SetMinMax(b.min, new Vector3(mid, b.max.y, b.max.z));
+            var right = new Bounds(); right.SetMinMax(new Vector3(mid, b.min.y, b.min.z), b.max);
+            var keep = zones;
+            zones = zonesLeft;
+            GroundIn(left, rivers.FindAll(r => r.XMax <= mid + 0.1f), canyons.FindAll(c => !c.Right));
+            zones = zonesRight;
+            GroundIn(right, rivers.FindAll(r => r.XMin >= mid - 0.1f), canyons.FindAll(c => c.Right));
+            zones = keep;
+        }
+
+        void GroundIn(Bounds b, List<River> riverSet, List<Canyon> canyonSet)
+        {
             // Под свалкой земля своя — наша начинается от выезда.
             float zMin = transform.position.z - 0.5f;
             float zMax = b.max.z;
             // Земля полосами между реками; в реках — русло с пологими берегами и вода.
             // Особые полосы по z — реки и ущелья: земля в них своя (рельеф с руслом или вырезом).
             var special = new List<(float zMin, float zMax, System.Action build)>();
-            foreach (var r in rivers) { var rr = r; special.Add((rr.ZMin, rr.ZMax, () => BuildRiver(b, rr))); }
-            foreach (var c in canyons) if (c.Rows.Count > 1) { var cc = c; special.Add((cc.ZMin, cc.ZMax, () => BuildCanyon(b, cc))); }
+            foreach (var r in riverSet) { var rr = r; special.Add((rr.ZMin, rr.ZMax, () => BuildRiver(b, rr))); }
+            foreach (var c in canyonSet) if (c.Rows.Count > 1) { var cc = c; special.Add((cc.ZMin, cc.ZMax, () => BuildCanyon(b, cc))); }
             special.Sort((p, q) => p.zMin.CompareTo(q.zMin));
             float from = zMin;
             foreach (var sp in special)
@@ -1375,8 +2095,10 @@ namespace JunkRace
         /// </summary>
         void BuildCanyon(Bounds b, Canyon c)
         {
-            var groundMat = groundMountain != null ? Tiled(groundMountain, Vector2.one) : Mat(MountainGround);
-            var wallMat = sideMountain != null ? sideMountain : Mat(MountainSide);
+            var groundSrc = GroundMaterial(c.Biome);
+            var groundMat = groundSrc != null ? Tiled(groundSrc, Vector2.one) : Mat(GroundColor(c.Biome));
+            var wallSrc = c.Biome == Biome.Forest ? sideForest : c.Biome == Biome.Snow ? sideSnow : c.Biome == Biome.Desert ? sideDesert : sideMountain;
+            var wallMat = wallSrc != null ? wallSrc : Mat(MountainSide);
 
             // Вид: над тоннелем — та же земля, что вокруг; у входа и выхода — скальный склон с открытым проёмом,
             // внутри — каменные стены и потолок (отдельный меш). Физика: вырез по всей длине (там дорога)
@@ -1686,7 +2408,7 @@ namespace JunkRace
         /// <summary>Плита земли с травой: текстура повторяется каждые GroundTile метров, как бы ни была велика плита.</summary>
         GameObject GroundPiece(string name, Vector3 position, Vector3 size, Biome biome = Biome.Forest)
         {
-            Color fallback = biome == Biome.Snow ? SnowWhite : biome == Biome.Mountains ? MountainGround : Grass;
+            Color fallback = GroundColor(biome);
             var go = Piece(name, cube, position, Quaternion.identity, size, fallback, Col.Box, Decor.Far);
             var src = GroundMaterial(biome);
             if (src != null) go.GetComponent<MeshRenderer>().sharedMaterial = Tiled(src, new Vector2(size.x / GroundTile, size.z / GroundTile));
@@ -1709,7 +2431,11 @@ namespace JunkRace
 
         static readonly Color MountainGround = new Color(0.58f, 0.45f, 0.32f);
 
-        Material GroundMaterial(Biome biome) => biome == Biome.Snow ? groundSnow : biome == Biome.Mountains ? groundMountain : groundGrass;
+        Material GroundMaterial(Biome biome) => biome == Biome.Snow ? groundSnow : biome == Biome.Mountains ? groundMountain
+                                              : biome == Biome.Desert ? groundSand : groundGrass;
+
+        static Color GroundColor(Biome biome) => biome == Biome.Snow ? SnowWhite : biome == Biome.Mountains ? MountainGround
+                                               : biome == Biome.Desert ? SandColor : Grass;
 
         const float GroundBlend = 10f;   // ширина полосы-перехода земли, м (картинка квадратная — по GroundTile)
 
@@ -1723,7 +2449,7 @@ namespace JunkRace
             // Биом на z: до первого участка — лес (выезд со свалки).
             Biome At(float z)
             {
-                var r = Biome.Forest;
+                var r = BaseBiome;
                 foreach (var zn in zones) if (z >= zn.z) r = zn.biome;
                 return r;
             }
@@ -1847,6 +2573,7 @@ namespace JunkRace
                         {
                             case Biome.Forest: DecorateForest(s, k); break;
                             case Biome.Mountains: DecorateMountains(s, k); break;
+                            case Biome.Desert: DecorateDesert(s, k); break;
                             default: DecorateSnow(s, k); break;
                         }
                     }
@@ -2104,6 +2831,7 @@ namespace JunkRace
                     var s = path.At(d);
                     float top = s.Pos.y - BridgeDeck, h = top - RiverBedY;
                     for (int k = -1; k <= 1; k += 2)
+                        if (!OnUnderpass(s.Pos + s.Right * k * (s.HalfWidth - 0.8f), 1.5f))
                         Piece("Мост_опора", cube, s.Pos + s.Right * k * (s.HalfWidth - 0.8f) + Vector3.up * (top - s.Pos.y - h / 2f),
                               Quaternion.LookRotation(s.Forward), new Vector3(0.7f, h, 0.7f), new Color(PortalWood.r * 0.85f, PortalWood.g * 0.85f, PortalWood.b * 0.85f), Col.Box);
                 }
@@ -2238,13 +2966,30 @@ namespace JunkRace
         }
 
         /// <summary>Арка (старт, финиш).</summary>
+        // Арка-модель: просвет между башнями — 42% ширины, его середина — на 47% ширины слева (модель чуть несимметрична).
+        const float ArchGap = 0.42f, ArchGapCenter = 0.47f;
+
         void Gate(Vector3 at, float yawDeg, float span, Color color)
         {
             var rot = Quaternion.Euler(0f, yawDeg, 0f);
             Vector3 r = rot * Vector3.right;
+            bool model = Any(archModels);
             for (int k = -1; k <= 1; k += 2)
-                Piece("Столб", cube, at + r * k * (span / 2f + 0.6f) + Vector3.up * 2.5f, rot, new Vector3(0.6f, 5f, 0.6f), color, Col.Box);
-            Piece("Перекладина", cube, at + Vector3.up * 5.2f, rot, new Vector3(span + 1.8f, 0.8f, 0.5f), color, Col.None);
+            {
+                var post = Piece("Столб", cube, at + r * k * (span / 2f + 0.6f) + Vector3.up * 2.5f, rot, new Vector3(0.6f, 5f, 0.6f), color, Col.Box);
+                if (model) Hidden(post);   // столбы остаются коллайдерами внутри башен
+            }
+            if (!model)
+            {
+                Piece("Перекладина", cube, at + Vector3.up * 5.2f, rot, new Vector3(span + 1.8f, 0.8f, 0.5f), color, Col.None);
+                return;
+            }
+            // Просвет арки — во всю ширину дороги; по высоте сжимаем (иначе арка выше леса), башни чуть шире — мультяшно.
+            float w = (span + 1.2f) / ArchGap;
+            float h = Mathf.Min(w * 0.73f, span * 0.85f);
+            float d = h * 0.3f;
+            var c = at - r * (ArchGapCenter - 0.5f) * w;
+            Model(archModels, c, rot, new Vector3(w, h, d * 2f), Decor.Solid);
         }
 
         void Finish(RouteSample s)
