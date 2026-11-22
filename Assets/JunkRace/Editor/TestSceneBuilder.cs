@@ -692,7 +692,7 @@ namespace JunkRace.EditorTools
         static readonly Dictionary<string, int> PropCounts = new Dictionary<string, int>
         {
             { "Block", 9 }, { "Reel", 9 }, { "TV02", 9 },          // мелочь — втрое больше исходного
-            { "Car0", 5 }, { "Car1", 5 }, { "GasPump", 4 }, { "Electric03", 5 },
+            { "Car0", 5 }, { "Car1", 5 }, { "GasPump", 4 },
             { "Bus", 1 }, { "Tank", 1 }, { "Windmill", 1 },
         };
 

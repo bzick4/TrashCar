@@ -48,7 +48,7 @@ namespace JunkRace
         bool laidOut;
 
         UiPainter paint;
-        static Texture2D panelTex;
+        static Texture2D panelTex, arrowTex;
         static RectOffset panelBorder;
         static RectOffset PanelBorder => panelBorder ??= new RectOffset(70, 70, 70, 70);
 
@@ -592,7 +592,13 @@ namespace JunkRace
             }
             float dist = World.Local is MonoBehaviour me ? Vector3.Distance(me.transform.position, world) : 0f;
             paint.Label(new Rect(x - 120f * k, y - 70f * k + bob, 240f * k, 30f * k), $"{label} · {dist:0} м", MarkLabel.With(Mathf.RoundToInt(20f * k)));
-            paint.Label(new Rect(x - 60f * k, y - 44f * k + bob, 120f * k, 56f * k), "↓", MarkStyle.With(Mathf.RoundToInt(44f * k)));
+            arrowTex ??= Resources.Load<Texture2D>("UI/hud/marker_arrow");
+            if (arrowTex != null)
+            {
+                float ah = 54f * k, aw = ah * arrowTex.width / arrowTex.height;
+                paint.Tex(new Rect(x - aw / 2f, y - 40f * k + bob, aw, ah), arrowTex);
+            }
+            else paint.Label(new Rect(x - 60f * k, y - 44f * k + bob, 120f * k, 56f * k), "↓", MarkStyle.With(Mathf.RoundToInt(44f * k)));
         }
     }
 }

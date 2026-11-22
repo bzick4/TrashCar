@@ -559,7 +559,7 @@ namespace JunkRace
                 case MatchPhase.Race:
                 {
                     float t = Elapsed;
-                    if (t < 1.2f) paint.Label(new Rect(0, h * 0.3f, w, 160), "ВПЕРЁД!", StyleBig);
+                    if (t < 1.2f) DrawGo(w, h, t);
                     placesTop = DrawRaceClock(t);
                     DrawLapInfo(w, h);
                     DrawPlaces();
@@ -966,6 +966,13 @@ namespace JunkRace
             // Мышь — чтобы нажать кнопку.
             if (!cursorFreed) { Cursor.lockState = CursorLockMode.None; Cursor.visible = true; cursorFreed = true; }
             var list = shownPlaces;
+            if (!resultsLoaded)
+            {
+                resultsLoaded = true;
+                resultsPanel = Resources.Load<Texture2D>("UI/hud/results_panel");
+                for (int i = 0; i < 3; i++) medals[i] = Resources.Load<Texture2D>("UI/hud/medal_" + (i + 1));
+            }
+            if (resultsPanel != null) { DrawResultsArt(list); return; }
             float bw = 640f, bh = 170f + Mathf.Max(1, list.Count) * 34f;
             var box = new Rect((Screen.width - bw) / 2f, (Screen.height - bh) / 2f, bw, bh);
             paint.Box(box, new Color(0f, 0f, 0f, 0.7f));
@@ -988,6 +995,62 @@ namespace JunkRace
             }
             else paint.Label(new Rect(box.x, box.y + bh - 86, bw, 34), "Ждём, когда хост запустит ещё заезд…", StyleRowCenter);
             paint.Label(new Rect(box.x, box.y + bh - 40, bw, 30), "Esc — меню", StyleRowCenter);
+        }
+
+        /// <summary>Итоги на ржавой табличке с флагами: медали за 1–3 места, время, деталей; под табличкой — кнопка.</summary>
+        void DrawResultsArt(List<Racer> list)
+        {
+            float w = Screen.width, h = Screen.height, k = h / 1080f;
+            float pw = Mathf.Min(900f * k, w - 40f), ph = pw * resultsPanel.height / resultsPanel.width;
+            var panel = new Rect((w - pw) / 2f, (h - ph) / 2f - 50f * k, pw, ph);
+            paint.Box(new Rect(0, 0, w, h), new Color(0f, 0f, 0f, 0.35f));
+            paint.Tex(panel, resultsPanel);
+            // Светлое поле внутри рамки (доли картинки).
+            var inner = new Rect(panel.x + pw * 0.09f, panel.y + ph * 0.30f, pw * 0.82f, ph * 0.56f);
+            var ink = new Color(0.27f, 0.17f, 0.1f);
+            var title = new UiPainter.Style(Mathf.RoundToInt(38f * k), ink, TextAnchor.MiddleCenter, true, false);
+            paint.Label(new Rect(inner.x, inner.y, inner.width, 52f * k), "Итоги заезда", title);
+            float rowH = Mathf.Min(58f * k, (inner.height - 60f * k) / Mathf.Max(1, list.Count));
+            float y = inner.y + 60f * k;
+            var row = new UiPainter.Style(Mathf.RoundToInt(26f * k), ink, TextAnchor.MiddleLeft, false, false);
+            if (list.Count == 0) paint.Label(new Rect(inner.x, y, inner.width, rowH), "Никто не стартовал", row.With(TextAnchor.MiddleCenter));
+            for (int i = 0; i < list.Count; i++, y += rowH)
+            {
+                var r = list[i];
+                var st = r.Id == World.LocalId ? row.WithBold(true).With(new Color(0.75f, 0.32f, 0.05f)) : row;
+                float mh = rowH * 0.92f;
+                var medal = i < 3 ? medals[i] : null;
+                if (medal != null) paint.Tex(new Rect(inner.x, y + (rowH - mh) / 2f, mh * medal.width / medal.height, mh), medal);
+                else paint.Label(new Rect(inner.x, y, mh, rowH), $"{i + 1}.", st.With(TextAnchor.MiddleCenter));
+                float x = inner.x + mh + 14f * k;
+                paint.Label(new Rect(x, y, inner.width * 0.42f, rowH), r.Name, st);
+                paint.Label(new Rect(inner.x + inner.width * 0.58f, y, inner.width * 0.2f, rowH), r.Finished ? FormatTime(r.Time) : "не доехал", st);
+                paint.Label(new Rect(inner.x + inner.width * 0.78f, y, inner.width * 0.22f, rowH), r.Finished ? $"деталей: {r.Parts}" : "", st);
+            }
+            float by = panel.yMax + 12f * k;
+            if (GameSession.CanRestart)
+            {
+                if (paint.Button(new Rect((w - 340f * k) / 2f, by, 340f * k, 64f * k), "Ещё заезд (Enter)", Mathf.RoundToInt(26f * k)))
+                    GameSession.RestartTrack();
+            }
+            else paint.Label(new Rect(0, by, w, 40f * k), "Ждём, когда хост запустит ещё заезд…", StyleRowCenter);
+            paint.Label(new Rect(0, by + 70f * k, w, 30f * k), "Esc — меню", StyleRowCenter);
+        }
+
+        static Texture2D goTex, resultsPanel;
+        static readonly Texture2D[] medals = new Texture2D[3];
+        static bool resultsLoaded;
+
+        /// <summary>«ВПЕРЁД!» после отсчёта: картинка выпрыгивает и к концу тает.</summary>
+        void DrawGo(float w, float h, float t)
+        {
+            goTex ??= Resources.Load<Texture2D>("UI/hud/go_text");
+            if (goTex == null) { paint.Label(new Rect(0, h * 0.3f, w, 160), "ВПЕРЁД!", StyleBig); return; }
+            float k = h / 1080f;
+            float pop = t < 0.15f ? Mathf.Lerp(0.6f, 1.12f, t / 0.15f) : Mathf.Lerp(1.12f, 1f, Mathf.Clamp01((t - 0.15f) / 0.2f));
+            float gw = 760f * k * pop, gh = gw * goTex.height / goTex.width;
+            float a = Mathf.Clamp01((1.2f - t) / 0.3f);
+            paint.Tex(new Rect((w - gw) / 2f, h * 0.36f - gh / 2f, gw, gh), goTex, new Color(1f, 1f, 1f, a));
         }
 
         static string FormatTime(float t) => t < 0f ? "--:--" : $"{(int)(t / 60):00}:{t % 60:00.0}";
