@@ -86,8 +86,9 @@ namespace JunkRace
         void Start()
         {
             // Первый запуск игры — сразу на свалку, в обучение (пройдено или пропущено — больше не начинается).
-            if (!GameSession.TutorialDone && string.IsNullOrEmpty(GameSession.PendingMessage))
+            if (!GameSession.TutorialDone && !GameSession.TutorialAutoStarted && string.IsNullOrEmpty(GameSession.PendingMessage))
             {
+                GameSession.TutorialAutoStarted = true;
                 GameSession.StartTutorial();
                 return;
             }

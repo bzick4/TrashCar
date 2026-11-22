@@ -144,9 +144,22 @@ namespace JunkRace
         /// <summary>Обучение пройдено или пропущено — при запуске игры больше не начинается само.</summary>
         public static bool TutorialDone
         {
-            get => PlayerPrefs.GetInt("jr_tutorial_done", 0) == 1;
-            set { PlayerPrefs.SetInt("jr_tutorial_done", value ? 1 : 0); PlayerPrefs.Save(); }
+            // tutorialDoneRun — запасной флаг на этот запуск: в браузере запись PlayerPrefs (IndexedDB)
+            // может не пройти, и без него обучение стартовало бы заново сразу после выхода в меню.
+            // Progress: PlayerPrefs + localStorage сайта — переживает обновление игры.
+            // jr_tutorial_done (int) — старый ключ, у кого он уже стоит, тоже считаем пройденным.
+            get => tutorialDoneRun || Progress.GetFlag("jr_tutorial_passed")
+                   || PlayerPrefs.GetInt("jr_tutorial_done", 0) == 1;
+            set
+            {
+                tutorialDoneRun = value;
+                Progress.SetFlag("jr_tutorial_passed", value);
+            }
         }
+        static bool tutorialDoneRun;
+
+        /// <summary>Автостарт обучения — только один раз за запуск игры.</summary>
+        public static bool TutorialAutoStarted;
 
         public static void StartTutorial()
         {
