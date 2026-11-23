@@ -74,9 +74,53 @@ namespace JunkRace
             }
         }
 
+        // ============================ Плейлист (в меню) ============================
+        // Кнопка «плеер» в меню: играет выбранный трек, потом по порядку списка. Как только уходим играть —
+        // плейлист гаснет и музыка идёт по обычным правилам (свалка, гонка).
+
+        bool manual;
+        int manualIndex;
+        List<AudioClip> allTracks;
+
+        /// <summary>Все треки без повторов, по папкам и по имени: номер в плейлисте = позиция в этом списке.</summary>
+        List<AudioClip> AllTracks()
+        {
+            if (allTracks != null) return allTracks;
+            allTracks = new List<AudioClip>();
+            foreach (Mood m in System.Enum.GetValues(typeof(Mood)))
+            {
+                var part = new List<AudioClip>(clips[m]);
+                part.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+                foreach (var c in part) if (!allTracks.Contains(c)) allTracks.Add(c);
+            }
+            return allTracks;
+        }
+
+        /// <summary>Сколько треков в плейлисте.</summary>
+        public static int PlaylistCount => instance != null ? instance.AllTracks().Count : 0;
+
+        /// <summary>Играет ли сейчас плейлист (выбран трек, и мы ещё в меню).</summary>
+        public static bool PlaylistActive => instance != null && instance.manual;
+
+        /// <summary>Номер играющего трека в плейлисте (-1 — не плейлист).</summary>
+        public static int PlaylistIndex => instance != null && instance.manual ? instance.manualIndex : -1;
+
+        /// <summary>Включить трек из плейлиста. Дальше идёт список по порядку, пока не уйдём играть.</summary>
+        public static void PlayFromPlaylist(int index)
+        {
+            if (instance == null) return;
+            var list = instance.AllTracks();
+            if (list.Count == 0) return;
+            instance.manual = true;
+            instance.manualIndex = Mathf.Clamp(index, 0, list.Count - 1);
+            instance.Begin(list[instance.manualIndex]);
+        }
+
         void Update()
         {
             var m = CurrentMood();
+            // Ушли из меню — плейлист гаснет, дальше правила (свалка / гонка).
+            if (manual && m != Mood.Menu) manual = false;
             if (!started || m != mood)
             {
                 started = true;
@@ -95,10 +139,23 @@ namespace JunkRace
             if (fadingWeight <= 0f && fading.isPlaying) fading.Stop();
         }
 
-        /// <summary>Следующий трек настроения: текущий уходит в затухание, новый плавно нарастает.</summary>
+        /// <summary>Следующий трек: в плейлисте — по списку, иначе — по настроению экрана.</summary>
         void PlayNext()
         {
-            var clip = Pick(mood);
+            if (manual)
+            {
+                var list = AllTracks();
+                if (list.Count == 0) return;
+                manualIndex = (manualIndex + 1) % list.Count;
+                Begin(list[manualIndex]);
+                return;
+            }
+            Begin(Pick(mood));
+        }
+
+        /// <summary>Трек плавно заменяет играющий: текущий уходит в затухание, новый нарастает.</summary>
+        void Begin(AudioClip clip)
+        {
             if (clip == null && active.clip == null) return;
             if (clip == active.clip && active.isPlaying && active.time < active.clip.length - FadeTime) return;
 
@@ -124,8 +181,12 @@ namespace JunkRace
         static Texture2D plate;
         static bool plateLoaded;
 
+        /// <summary>Плашку с названием трека пока не показываем: треки без авторов. Код оставлен — для плейлиста в меню.</summary>
+        const bool ShowPlate = false;
+
         void ShowNowPlaying(AudioClip clip)
         {
+            if (!ShowPlate) return;
             string n = clip.name.Replace('_', ' ').Trim();
             int dash = n.IndexOf(" - ", System.StringComparison.Ordinal);
             if (dash > 0) { npArtist = n.Substring(0, dash).Trim(); npTitle = n.Substring(dash + 3).Trim(); }

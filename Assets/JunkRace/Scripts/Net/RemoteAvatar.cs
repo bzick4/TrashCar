@@ -79,6 +79,7 @@ namespace JunkRace
                 NetInput.Throttle = 0f;
                 NetInput.Steer = 0f;
                 NetInput.Special = false;
+                NetInput.Handbrake = false;
             }
         }
 

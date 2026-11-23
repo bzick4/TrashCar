@@ -186,11 +186,10 @@ namespace JunkRace
 
         // ======================= Текст =======================
 
-        public static Text Label(Transform parent, string text, int size, Color color, bool bold = false,
+        public static UiText Label(Transform parent, string text, int size, Color color, bool bold = false,
                                  TextAnchor align = TextAnchor.MiddleLeft, bool wrap = false, bool shadow = false)
         {
-            var t = Node("Text", parent).gameObject.AddComponent<Text>();
-            t.font = Font;
+            var t = UiText.Add(Node("Text", parent).gameObject);
             t.text = text;
             t.fontSize = size;
             t.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
@@ -200,19 +199,14 @@ namespace JunkRace
             t.verticalOverflow = VerticalWrapMode.Overflow;
             t.raycastTarget = false;
             t.supportRichText = true;
-            if (shadow)
-            {
-                var sh = t.gameObject.AddComponent<Shadow>();
-                sh.effectColor = new Color(0f, 0f, 0f, 0.85f);
-                sh.effectDistance = new Vector2(2f, -2f);
-            }
+            if (shadow) t.UseShadow();
             return t;
         }
 
-        public static Text Header(Transform p, string text) => Label(p, text, 46, Accent, true);
-        public static Text Body(Transform p, string text) => Label(p, text, 28, Color.white);
-        public static Text Hint(Transform p, string text) => Label(p, text, 21, HintColor, wrap: true);
-        public static Text Error(Transform p) => Label(p, "", 24, ErrorColor, wrap: true);
+        public static UiText Header(Transform p, string text) => Label(p, text, 46, Accent, true);
+        public static UiText Body(Transform p, string text) => Label(p, text, 28, Color.white);
+        public static UiText Hint(Transform p, string text) => Label(p, text, 21, HintColor, wrap: true);
+        public static UiText Error(Transform p) => Label(p, "", 24, ErrorColor, wrap: true);
 
         // ======================= Кнопки =======================
 
@@ -251,7 +245,7 @@ namespace JunkRace
         public sealed class UiButton
         {
             public UnityEngine.UI.Button Button;
-            public Text Text;
+            public UiText Text;
             public UnityEngine.UI.Image Icon;
             public RectTransform Rect;
             public bool Interactable { get => Button.interactable; set => Button.interactable = value; }
@@ -299,7 +293,7 @@ namespace JunkRace
         static bool fieldLoaded;
 
         /// <summary>Поле ввода (input_field.png). password — звёздочки.</summary>
-        public static InputField Field(Transform parent, string value, int maxLength, Action<string> onChange, bool password = false)
+        public static TMPro.TMP_InputField Field(Transform parent, string value, int maxLength, Action<string> onChange, bool password = false)
         {
             if (!fieldLoaded) { fieldLoaded = true; fieldSprite = Sprite(Load("input_field"), new RectOffset(26, 26, 22, 22)); }
             var rt = Node("Field", parent);
@@ -308,14 +302,18 @@ namespace JunkRace
             bg.type = fieldSprite != null ? UnityEngine.UI.Image.Type.Sliced : UnityEngine.UI.Image.Type.Simple;
             bg.color = fieldSprite != null ? Color.white : new Color(0.15f, 0.14f, 0.12f);
             Size(rt, -1f, 64f, 1f);
-            var text = Label(Stretch(Node("TextArea", rt), 26f, 12f, 26f, 10f), "", 28, Cream);
+            var area = Stretch(Node("TextArea", rt), 26f, 12f, 26f, 10f);
+            area.gameObject.AddComponent<RectMask2D>();
+            var text = Label(area, "", 28, Cream);
             Stretch(text.rectTransform);
             text.supportRichText = false;
-            var f = rt.gameObject.AddComponent<InputField>();
+            var f = rt.gameObject.AddComponent<TMPro.TMP_InputField>();
             f.targetGraphic = bg;
+            f.textViewport = area;
             f.textComponent = text;
+            f.fontAsset = UiText.UiFont;
             f.characterLimit = maxLength;
-            f.contentType = password ? InputField.ContentType.Password : InputField.ContentType.Standard;
+            f.contentType = password ? TMPro.TMP_InputField.ContentType.Password : TMPro.TMP_InputField.ContentType.Standard;
             f.asteriskChar = '*';
             f.caretColor = Cream;
             f.customCaretColor = true;

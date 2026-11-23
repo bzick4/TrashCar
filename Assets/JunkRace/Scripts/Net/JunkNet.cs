@@ -296,7 +296,8 @@ namespace JunkRace
             using var w = new FastBufferWriter(16, Allocator.Temp);
             w.WriteValueSafe(input.Throttle);
             w.WriteValueSafe(input.Steer);
-            w.WriteValueSafe(input.Special);
+            byte buttons = (byte)((input.Special ? 1 : 0) | (input.Handbrake ? 2 : 0));
+            w.WriteValueSafe(buttons);
             Msg.SendNamedMessage(MsgInput, NetworkManager.ServerClientId, w, NetworkDelivery.UnreliableSequenced);
         }
 
@@ -368,11 +369,12 @@ namespace JunkRace
         {
             r.ReadValueSafe(out float throttle);
             r.ReadValueSafe(out float steer);
-            r.ReadValueSafe(out bool special);
+            r.ReadValueSafe(out byte buttons);
             if (!ghosts.TryGetValue(sender, out var g)) return;
             g.NetInput.Throttle = Mathf.Clamp(throttle, -1f, 1f);
             g.NetInput.Steer = Mathf.Clamp(steer, -1f, 1f);
-            g.NetInput.Special = special;
+            g.NetInput.Special = (buttons & 1) != 0;
+            g.NetInput.Handbrake = (buttons & 2) != 0;
         }
 
         void OnClientLeft(ulong clientId)

@@ -270,6 +270,9 @@ namespace JunkRace
         /// <summary>Коэффициент трения шины: сила шины не больше μ × прижатие к земле.</summary>
         const float TireFriction = 1.5f;
 
+        /// <summary>Ручник: доля бокового сцепления задних колёс (меньше — сильнее занос) и сила блокировки.</summary>
+        const float HandbrakeSideGrip = 0.3f, HandbrakeLock = 0.6f;
+
         public void TickAsWheel(float dt)
         {
             var vehicle = Vehicle;
@@ -308,6 +311,12 @@ namespace JunkRace
             float traction = AsWheelTraction;
             float drive = Mathf.Clamp(vehicle.WheelDriveForce, -traction, traction);
 
+            // Ручник: задние колёса (за центром машины) блокируются и теряют боковое сцепление —
+            // зад уходит в занос, машина резко доворачивает. Тяги на заблокированном колесе нет.
+            bool handbrake = vehicle.HasDriver && vehicle.Input.Handbrake
+                             && car.InverseTransformPoint(transform.position).z < body.centerOfMass.z;
+            if (handbrake) drive = 0f;
+
             // Пружина давит по нормали к земле. Если давить вдоль оси машины, то при крене
             // (например, колёс всего три) у силы есть горизонтальная часть — и машина сама уезжает.
             // Прикладываем над местом крепления, а не в точке касания: луч идёт вдоль наклонённой оси,
@@ -319,8 +328,8 @@ namespace JunkRace
             // тоже держится (не ползёт). На скорости без газа катится по инерции.
             bool noThrottle = Mathf.Abs(vehicle.Input.Throttle) < 0.05f;
             bool brake = !vehicle.HasDriver || (noThrottle && Mathf.Abs(fwdSpeed) < 1.5f);
-            float kSide = Mathf.Min(AsWheelGrip, maxDamping);
-            float kRoll = Mathf.Min(AsWheelRollingResistance + (brake ? AsWheelGrip : 0f), maxDamping);
+            float kSide = Mathf.Min(AsWheelGrip * (handbrake ? HandbrakeSideGrip : 1f), maxDamping);
+            float kRoll = Mathf.Min(AsWheelRollingResistance + (brake ? AsWheelGrip : handbrake ? AsWheelGrip * HandbrakeLock : 0f), maxDamping);
 
             Vector3 tire = -right * Vector3.Dot(vel, right) * kSide
                          - fwd * fwdSpeed * kRoll

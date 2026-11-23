@@ -143,7 +143,15 @@ namespace JunkRace
         {
             yield return null;
             yield return null;
-            if (buildRoute && RouteGenerator.Instance != null) RouteGenerator.Instance.BuildRoute();
+            // Веб: перед стройкой трассы освобождаем, что можно, — у браузера телефона памяти впритык.
+            if (buildRoute && Application.platform == RuntimePlatform.WebGLPlayer)
+            {
+                yield return Resources.UnloadUnusedAssets();
+                GC.Collect();
+                yield return null;
+            }
+            // Трасса строится в фоне ещё на свалке; тут дожидаемся остатка (по кусочкам, под экраном загрузки).
+            if (buildRoute && RouteGenerator.Instance != null) yield return RouteGenerator.Instance.BuildRouteRoutine();
             yield return null;
             // Shader.WarmupAllShaders() тут не годится: в Unity 6 + URP он сыплет ошибками keyword space
             // и шейдеры Metal всё равно не прогревает. Шейдеры компилируются, пока кадры рисуются под экраном загрузки.

@@ -37,8 +37,8 @@ namespace JunkRace
             IsOpen = open;
             if (!open) soundPage = false;
             bool free = open || Tutorial.ModalOpen;   // под меню могло быть окно обучения — ему нужна мышь
-            Cursor.lockState = free ? CursorLockMode.None : CursorLockMode.Locked;
-            Cursor.visible = free;
+            Cursor.lockState = free ? CursorLockMode.None : TouchControls.GameLock;
+            Cursor.visible = free || TouchControls.TouchMode;
             // В коопе мир не останавливаем: другие игроки продолжают.
             if (GameSession.Mode == GameMode.Solo) Time.timeScale = open ? 0f : 1f;
         }

@@ -37,13 +37,13 @@ namespace JunkRace
             }
         }
 
-        enum Screen { Main, Browser, Create, Password, Code, Busy, Lobby, Sound, Race, Biome }
+        enum Screen { Main, Browser, Create, Password, Code, Busy, Lobby, Sound, Race, Biome, Playlist }
 
         /// <summary>Глубина экрана: вперёд (глубже) — старое окно уезжает влево, новое выезжает справа; назад — наоборот.</summary>
         static int Depth(Screen s) => s switch
         {
             Screen.Main => 0,
-            Screen.Browser or Screen.Sound or Screen.Race => 1,
+            Screen.Browser or Screen.Sound or Screen.Race or Screen.Playlist => 1,
             Screen.Create or Screen.Password or Screen.Code or Screen.Biome => 2,
             Screen.Busy => 3,
             _ => 4,
@@ -130,9 +130,90 @@ namespace JunkRace
             mainHome = mainArea.anchoredPosition;
             panelHome = panel.anchoredPosition;
 
+            // Круглые кнопки в правом нижнем углу: обучение (?) и плейлист (ноты). Только на главном экране.
+            BuildCorner();
+
             // Слой анимаций — поверх всего, клики не ловит.
             fxLayer = Ui.Stretch(Ui.Node("Анимации", canvas));
             fx.Layer = fxLayer;
+        }
+
+        RectTransform corner;   // круглые кнопки в правом нижнем углу
+        static Sprite discSprite;
+
+        static Sprite Disc()
+        {
+            if (discSprite != null) return discSprite;
+            const int n = 128;
+            var tex = new Texture2D(n, n, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            var px = new Color32[n * n];
+            float c = (n - 1) * 0.5f, R = n * 0.5f - 1f;
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c));
+                    px[y * n + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(R - d + 0.5f) * 255f));
+                }
+            tex.SetPixels32(px);
+            tex.Apply(false, true);
+            discSprite = Sprite.Create(tex, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f), n);
+            return discSprite;
+        }
+
+        void BuildCorner()
+        {
+            corner = Ui.Node("Углы", canvas);
+            corner.anchorMin = corner.anchorMax = corner.pivot = new Vector2(1f, 0f);
+            corner.anchoredPosition = new Vector2(-40f, 40f);
+            corner.sizeDelta = new Vector2(230f, 100f);
+            CornerButton(corner, 0f, "?", null, () => { if (!(fx != null && fx.Available && fx.Busy)) GameSession.StartTutorial(); });
+            CornerButton(corner, 120f, null, "note", () => Show(Screen.Playlist));
+        }
+
+        void CornerButton(RectTransform parent, float x, string text, string icon, Action onClick)
+        {
+            var rt = Ui.Node("Круглая", parent);
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0f, 0f);
+            rt.anchoredPosition = new Vector2(x, 0f);
+            rt.sizeDelta = new Vector2(100f, 100f);
+            var bg = rt.gameObject.AddComponent<UnityEngine.UI.Image>();
+            bg.sprite = Disc();
+            bg.color = new Color(0.12f, 0.09f, 0.07f, 0.85f);
+            var b = rt.gameObject.AddComponent<UnityEngine.UI.Button>();
+            b.targetGraphic = bg;
+            var nav = b.navigation; nav.mode = Navigation.Mode.None; b.navigation = nav;
+            b.onClick.AddListener(() => onClick());
+            if (text != null)
+            {
+                var t = Ui.Label(rt, text, 60, Ui.Cream, true, TextAnchor.MiddleCenter);
+                Ui.Stretch(t.rectTransform);
+            }
+            if (icon != null)
+            {
+                var img = Ui.Image("Значок", rt, Ui.Sprite(Ui.Icon(icon)), Color.white);
+                img.preserveAspect = true;
+                Ui.Stretch(img.rectTransform, 26f, 26f, 26f, 26f);
+            }
+        }
+
+        /// <summary>Плейлист: треки по номерам, рядом — значок воспроизведения. Играет по порядку, пока не уйдём играть.</summary>
+        void BuildPlaylist()
+        {
+            Ui.Header(content, "Плейлист");
+            Ui.Hint(content, "Играет по порядку. Уйдёшь на свалку или в гонку — музыка пойдёт по своим правилам.");
+            Ui.Space(content, 12f);
+            var list = Ui.Scroll(content, 560f, new Color(0f, 0f, 0f, 0.25f));
+            int now = MusicPlayer.PlaylistIndex;
+            int n = MusicPlayer.PlaylistCount;
+            if (n == 0) Ui.Hint(list, "Треков пока нет.");
+            for (int i = 0; i < n; i++)
+            {
+                int idx = i;
+                string label = "Трек " + (i + 1) + (i == now ? "   · играет" : "");
+                Ui.Button(list, label, "play", Ui.Small, () => { MusicPlayer.PlayFromPlaylist(idx); built = null; }, -1f);
+            }
+            Ui.Space(content, 0f, true);
+            Ui.Button(content, "Назад", "back", Ui.Big, () => Show(Screen.Main));
         }
 
         void OnDestroy()
@@ -214,6 +295,7 @@ namespace JunkRace
             bool main = screen == Screen.Main;
             mainArea.gameObject.SetActive(main);
             panel.gameObject.SetActive(!main);
+            if (corner != null) corner.gameObject.SetActive(main);
             if (main) { fx?.Reset(); BuildMain(); return; }
             fxLayer.gameObject.SetActive(false);
 
@@ -232,6 +314,7 @@ namespace JunkRace
                 case Screen.Sound: BuildSound(); break;
                 case Screen.Race: BuildRace(); break;
                 case Screen.Biome: BuildBiome(); break;
+                case Screen.Playlist: BuildPlaylist(); break;
             }
             ErrorLine(content, false);
         }
@@ -314,8 +397,6 @@ namespace JunkRace
                 if (fx != null && fx.Available) fx.LaunchWheel(Open);
                 else Open();
             }, bw);
-            Ui.Space(area, 8f);
-            Ui.Button(area, "Обучение", null, Ui.Big, () => { if (!Busy()) GameSession.StartTutorial(); }, bw);
             Ui.Space(area, 8f);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // Только для разработки: в обычной сборке игры кнопки нет.
@@ -682,7 +763,7 @@ namespace JunkRace
             var hostIcon = Ui.Icon("host");
             var readyIcon = Ui.Sprite(Ui.Icon("ready"));
             var notReadyIcon = Ui.Sprite(Ui.Icon("not_ready"));
-            var slots = new List<(UnityEngine.UI.Image host, Text name, UnityEngine.UI.Image ready, Text readyText)>();
+            var slots = new List<(UnityEngine.UI.Image host, UiText name, UnityEngine.UI.Image ready, UiText readyText)>();
             for (int i = 0; i < GameSession.CoopMaxPlayers; i++)
             {
                 var slot = Ui.Node("Слот", content);
@@ -768,7 +849,7 @@ namespace JunkRace
             toggle.Button.onClick.AddListener(() =>
             {
                 showPassword = !showPassword;
-                field.contentType = showPassword ? InputField.ContentType.Standard : InputField.ContentType.Password;
+                field.contentType = showPassword ? TMPro.TMP_InputField.ContentType.Standard : TMPro.TMP_InputField.ContentType.Password;
                 field.ForceLabelUpdate();
                 toggle.Text.text = showPassword ? "скрыть" : "показать";
             });

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>{{{ PRODUCT_NAME }}}</title>
+    <!-- Telegram Mini App: вне Telegram скрипт просто ничего не делает -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1a120c;
+                   touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+      #unity-canvas { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; background: #1a120c; outline: none; }
+      #loading { position: fixed; left: 50%; bottom: 12%; width: 40%; height: 10px; margin-left: -20%; background: rgba(255,255,255,0.15); border-radius: 5px; }
+      #loading-bar { width: 0; height: 100%; background: #ff9e26; border-radius: 5px; }
+      #rotate { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column;
+                background: #1a120c; color: #fbeed1; font: 600 20px -apple-system, Roboto, sans-serif; text-align: center; z-index: 10; }
+      #rotate .icon { font-size: 64px; margin-bottom: 16px; }
+      @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
+    </style>
+  </head>
+  <body>
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+    <div id="loading"><div id="loading-bar"></div></div>
+    <div id="rotate"><div class="icon">↻</div>Поверни телефон горизонтально</div>
+    <script>
+      // Захват мыши: Safari (и Mac, и iPhone) отказывает в pointer lock без клика игрока — промис падает
+      // с NotSupportedError, Unity принимает это за крах игры и показывает окно ошибки. Отказ глотаем:
+      // Unity сама попросит захват ещё раз по следующему клику, и тогда браузер разрешит.
+      (function () {
+        var proto = window.Element && Element.prototype;
+        var orig = proto && proto.requestPointerLock;
+        if (orig) proto.requestPointerLock = function () {
+          try {
+            var r = orig.apply(this, arguments);
+            if (r && typeof r.catch === "function") r.catch(function () { });
+            return r;
+          } catch (e) { }
+        };
+        // Тот же отказ, если пришёл мимо обёртки (до Unity: её обработчик ошибок регистрируется позже).
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e.reason, name = r && r.name;
+          if (name === "NotSupportedError" || name === "NotAllowedError" || name === "WrongDocumentError") {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            console.warn("Пропущено (браузер отказал):", r);
+          }
+        });
+      })();
+
+      // Настройка Telegram (зовёт и игра, и страница сама): на весь экран, без закрытия свайпом вниз,
+      // ориентация фиксируется, когда телефон уже лежит горизонтально.
+      window.junkTelegramSetup = function () {
+        var tg = window.Telegram && window.Telegram.WebApp;
+        if (!tg || !tg.initData || window.junkTelegramDone) return;
+        window.junkTelegramDone = true;
+        try { tg.ready(); tg.expand(); } catch (e) { }
+        var v = function (x) { try { return tg.isVersionAtLeast(x); } catch (e) { return false; } };
+        try { if (v("7.7")) tg.disableVerticalSwipes(); } catch (e) { }
+        try { if (v("8.0")) tg.requestFullscreen(); } catch (e) { }
+        try { if (v("6.2")) tg.enableClosingConfirmation(); } catch (e) { }
+        var lock = function () {
+          if (!v("8.0") || window.innerWidth <= window.innerHeight) return;
+          try { tg.lockOrientation(); } catch (e) { }
+        };
+        lock();
+        window.addEventListener("resize", lock);
+      };
+      window.junkTelegramSetup();
+
+      // Обычный браузер телефона (не Telegram): по первому касанию — на весь экран и горизонтально.
+      // Android Chrome так умеет; iPhone Safari поворот не даёт — там остаётся подсказка «Поверни телефон».
+      var inTelegram = !!(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData);
+      if (!inTelegram && (navigator.maxTouchPoints > 0)) {
+        var goLandscape = function () {
+          document.removeEventListener("touchend", goLandscape);
+          var el = document.documentElement;
+          var fs = el.requestFullscreen || el.webkitRequestFullscreen;
+          var lock = function () { try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(function () { }); } catch (e) { } };
+          try { if (fs) { var p = fs.call(el); if (p && p.then) p.then(lock, lock); else lock(); } else lock(); } catch (e) { lock(); }
+        };
+        document.addEventListener("touchend", goLandscape);
+      }
+
+      // Двойной тап и щипок не должны масштабировать страницу.
+      document.addEventListener("gesturestart", function (e) { e.preventDefault(); });
+      document.addEventListener("dblclick", function (e) { e.preventDefault(); });
+
+      var mobile = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
+      var script = document.createElement("script");
+      script.src = "Build/{{{ LOADER_FILENAME }}}";
+      script.onload = function () {
+        createUnityInstance(document.querySelector("#unity-canvas"), {
+          arguments: [],
+          dataUrl: "Build/{{{ DATA_FILENAME }}}",
+          frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}",
+#if USE_THREADS
+          workerUrl: "Build/{{{ WORKER_FILENAME }}}",
+#endif
+#if USE_WASM
+          codeUrl: "Build/{{{ CODE_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+          symbolsUrl: "Build/{{{ SYMBOLS_FILENAME }}}",
+#endif
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
+          productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
+          productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+          // Холст — в полном разрешении экрана: интерфейс и текст чёткие. 3D игра сама рисует
+          // в уменьшенном масштабе на телефоне (QualitySetup: не больше ~1000 строк по высоте).
+        }, function (progress) {
+          document.getElementById("loading-bar").style.width = (100 * progress) + "%";
+        }).then(function () {
+          document.getElementById("loading").style.display = "none";
+        }).catch(function (message) {
+          alert(message);
+        });
+      };
+      document.body.appendChild(script);
+    </script>
+  </body>
+</html>

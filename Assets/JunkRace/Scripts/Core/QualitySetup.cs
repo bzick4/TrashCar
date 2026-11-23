@@ -20,14 +20,46 @@ namespace JunkRace
             set { PlayerPrefs.SetInt(Key, Mathf.Clamp(value, 0, Scales.Length - 1)); PlayerPrefs.Save(); Apply(); }
         }
 
-        /// <summary>Фактический масштаб: «Авто» — 75% на экранах выше 1600 строк, иначе 100%.</summary>
+        /// <summary>
+        /// Фактический масштаб: «Авто» — 75% на экранах выше 1600 строк, иначе 100%.
+        /// Телефон: 3D — не больше ~1000 строк по высоте (на iPhone это ~85%, на плотных экранах меньше);
+        /// интерфейс поверх рисуется в полном разрешении экрана и остаётся чётким.
+        /// </summary>
         public static float EffectiveScale
         {
             get
             {
                 float s = Scales[ScaleIndex];
-                return s > 0f ? s : (Screen.height > 1600 ? 0.75f : 1f);
+                if (s > 0f) return s;
+                if (TouchControls.TouchMode && !Application.isEditor) return Mathf.Clamp(1000f / Mathf.Max(1, Screen.height), 0.5f, 1f);
+                return Screen.height > 1600 ? 0.75f : 1f;
             }
+        }
+
+        static bool mobileApplied;
+
+        /// <summary>
+        /// Телефон (сборка, не редактор — там это переписало бы ассет): без HDR, тени попроще и ближе,
+        /// без SSAO (самый дорогой эффект на пиксель). Контуры и дымку оставляем — это стиль игры.
+        /// </summary>
+        public static void ApplyMobile()
+        {
+            if (mobileApplied || Application.isEditor) return;
+            if (!(GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset urp)) return;
+            mobileApplied = true;
+            urp.supportsHDR = false;
+            urp.shadowDistance = Mathf.Min(urp.shadowDistance, 35f);
+            urp.mainLightShadowmapResolution = 1024;
+            var field = typeof(UniversalRenderPipelineAsset).GetField("m_RendererDataList",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (field?.GetValue(urp) is ScriptableRendererData[] list)
+                foreach (var data in list)
+                {
+                    if (data == null) continue;
+                    foreach (var f in data.rendererFeatures)
+                        if (f != null && (f.name.Contains("AmbientOcclusion") || f.GetType().Name.Contains("AmbientOcclusion"))) f.SetActive(false);
+                }
+            Apply();
         }
 
         // ---------------- Лимит кадров ----------------
@@ -59,6 +91,7 @@ namespace JunkRace
         static void Init()
         {
             Apply();
+            if (TouchControls.TouchMode) ApplyMobile();
             ApplyFps();
             Application.focusChanged += _ => ApplyFps();
             // В редакторе масштаб пишется прямо в ассет пайплайна — по выходу из игры возвращаем как было.

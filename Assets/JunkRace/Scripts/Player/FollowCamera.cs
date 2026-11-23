@@ -43,7 +43,7 @@ namespace JunkRace
 
         void Start()
         {
-            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.lockState = TouchControls.GameLock;
             currentDistance = distance;
             var cam = GetComponent<Camera>();
             if (cam) cam.nearClipPlane = 0.05f;
@@ -77,7 +77,11 @@ namespace JunkRace
                 ApplyMode();
             }
 
-            Vector2 mouse = player.Controls.LookMouse.ReadValue<Vector2>();
+            // Сенсор: свайп вместо мыши (мышь в браузере телефона приходит эхом от касаний — её не берём).
+            // Градусы на пиксель — от высоты экрана, чтобы на любом телефоне свайп на весь экран ≈ пол-оборота.
+            Vector2 mouse = TouchControls.TouchMode
+                ? TouchControls.LookDelta * (150f / Mathf.Max(200f, Screen.height)) / Mathf.Max(0.0001f, mouseSensitivity)
+                : player.Controls.LookMouse.ReadValue<Vector2>();
             Vector2 stick = player.Controls.LookStick.ReadValue<Vector2>();
             float dx = mouse.x * mouseSensitivity + stick.x * stickSpeed * Time.deltaTime;
             float dy = mouse.y * mouseSensitivity + stick.y * stickSpeed * Time.deltaTime;

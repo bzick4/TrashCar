@@ -54,7 +54,7 @@ namespace JunkRace
         /// зайдёт к новой — и всё развалится). Меняется сама с версией игры (Player Settings → Version);
         /// NetProtocol — поднять вручную, если поменялось что-то сетевое, а версию забыли.
         /// </summary>
-        const int NetProtocol = 3;   // 2 — Relay по WebSocket (WSS); 3 — настройки гонки (спринт/кольцо) в состоянии
+        const int NetProtocol = 4;   // 2 — Relay по WebSocket (WSS); 3 — настройки гонки (спринт/кольцо) в состоянии; 4 — ручник во вводе
         public static string NetVersion => Application.version + "/" + NetProtocol;
         const float StartCountdown = 3f;
 
@@ -146,7 +146,10 @@ namespace JunkRace
             {
                 Debug.LogException(e);
                 signIn = null;   // дадим попробовать ещё раз
-                Failed?.Invoke("Не удалось войти в Unity Services. Проект привязан к Unity Cloud? (Edit → Project Settings → Services)");
+                // Причину — прямо в сообщении: в браузере телефона (Telegram) консоли не видно.
+                string why = e.InnerException != null ? e.InnerException.Message : e.Message;
+                if (why != null && why.Length > 160) why = why.Substring(0, 160) + "…";
+                Failed?.Invoke($"Не удалось войти в Unity Services: {e.GetType().Name}: {why}");
                 return false;
             }
         }

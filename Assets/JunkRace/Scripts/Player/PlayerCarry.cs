@@ -557,7 +557,7 @@ namespace JunkRace
                 : shownPoints.Count > 0 ? $"E — бросить «{Held.DisplayName}»   ({(player.FirstPersonView ? "наведи прицел на зелёное место" : "поднеси к зелёному месту")}, чтобы прикрутить)"
                 : $"E — бросить «{Held.DisplayName}»";
             if (Held != null && hiddenNotFitting > 0) hint += "   Alt — все места (прикрутить как груз)";
-            paint.Label(new Rect(20, Screen.height - 40, 1200, 30), hint, hintStyle);
+            if (!TouchControls.TouchMode) paint.Label(new Rect(20, Screen.height - 40, 1200, 30), hint, hintStyle);
         }
 
         /// <summary>Полоска поиска под прицелом и надпись «нашёл / пусто».</summary>
@@ -582,7 +582,7 @@ namespace JunkRace
             else if (LookPile != null && Held == null)
             {
                 // Можно рыться — говорим прямо у прицела, а не только мелкой строкой внизу.
-                paint.Label(new Rect(cx - 200f, y - 10f, 400f, 30f), "E — порыться", centerStyle.With(new Color(1f, 0.85f, 0.35f)));
+                paint.Label(new Rect(cx - 200f, y - 10f, 400f, 30f), TouchControls.TouchMode ? "Порыться" : "E — порыться", centerStyle.With(new Color(1f, 0.85f, 0.35f)));
             }
         }
 
@@ -607,7 +607,7 @@ namespace JunkRace
 
                 bool active = pile == LookPile;
                 bool empty = pile.Remaining == 0;
-                string text = active ? $"[E] Порыться в «{pile.DisplayName}»"
+                string text = active ? (TouchControls.TouchMode ? $"Порыться в «{pile.DisplayName}»" : $"[E] Порыться в «{pile.DisplayName}»")
                     : empty ? $"{pile.DisplayName} (пусто)"
                     : pile.InReach(transform.position) && player.FirstPersonView ? $"{pile.DisplayName} — наведи прицел"
                     : pile.DisplayName;

@@ -22,6 +22,13 @@ namespace JunkRace.EditorTools
                 s.compressionFormat = AudioCompressionFormat.Vorbis;
                 s.quality = 0.6f;
                 importer.loadInBackground = true;
+                // Веб: потоковой загрузки там нет — трек держим сжатым в памяти (Vorbis декодирует сам Unity).
+                var web = importer.GetOverrideSampleSettings("WebGL");
+                web.loadType = AudioClipLoadType.CompressedInMemory;
+                web.compressionFormat = AudioCompressionFormat.Vorbis;
+                web.quality = 0.4f;   // веб: музыка в файле данных — экономим; на телефоне разницу почти не слышно
+                importer.SetOverrideSampleSettings("WebGL", web);   // становится включённым, как только задан
+
             }
             else if (assetPath.StartsWith(Engine))
             {

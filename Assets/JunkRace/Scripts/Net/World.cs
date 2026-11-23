@@ -28,6 +28,7 @@ namespace JunkRace
         public float Throttle { get; set; }
         public float Steer { get; set; }
         public bool Special { get; set; }
+        public bool Handbrake { get; set; }
     }
 
     /// <summary>

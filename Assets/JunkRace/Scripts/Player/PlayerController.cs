@@ -206,7 +206,31 @@ namespace JunkRace
         /// <summary>F: сесть на ближайшее свободное место — за руль или пассажиром в кресло.</summary>
         void TryEnterVehicle()
         {
-            if (carry != null && carry.Held != null) return;
+            if (!FindEnter(out var vehicle, out var chair)) return;
+            if (vehicle != null) World.RequestEnter(vehicle);
+            else World.RequestSit(chair);
+        }
+
+        float enterCheckTimer;
+        bool canEnterCached;
+
+        /// <summary>Рядом есть куда сесть (для сенсорной кнопки «Сесть»; пересчёт 5 раз в секунду).</summary>
+        public bool CanEnterNearby
+        {
+            get
+            {
+                enterCheckTimer -= Time.unscaledDeltaTime;
+                if (enterCheckTimer <= 0f) { enterCheckTimer = 0.2f; canEnterCached = !InVehicle && FindEnter(out _, out _); }
+                return canEnterCached;
+            }
+        }
+
+        /// <summary>Куда сядет F: за руль машины (vehicle) или в кресло (chair). false — некуда.</summary>
+        bool FindEnter(out Vehicle vehicle, out SeatPart chair)
+        {
+            vehicle = null;
+            chair = null;
+            if (carry != null && carry.Held != null) return false;
 
             // Сначала — кресло, на которое смотришь. Иначе водительское место (оно в центре корпуса)
             // почти всегда ближе, и F сажал за руль вместо кресла.
@@ -215,18 +239,16 @@ namespace JunkRace
                 // Кресло водителя — за руль этой машины.
                 if (aimed.IsDriverChair && !aimed.Vehicle.HasDriver && !aimed.Vehicle.RootPart.IsCarried && aimed.Vehicle.MayUse(World.LocalId))
                 {
-                    World.RequestEnter(aimed.Vehicle);
-                    return;
+                    vehicle = aimed.Vehicle;
+                    return true;
                 }
                 if (aimed.CanSit)
                 {
-                    World.RequestSit(aimed);
-                    return;
+                    chair = aimed;
+                    return true;
                 }
             }
 
-            Vehicle bestVehicle = null;
-            SeatPart bestSeat = null;
             float bestDist = enterRadius;
             // Своя машина без водителя — сначала за руль: иначе у машины на боку кресло оказывалось ближе
             // места водителя, F сажал пассажиром, и сброс (R) не работал.
@@ -235,18 +257,18 @@ namespace JunkRace
                 if (v.HasDriver || v.RootPart.IsCarried || v.RootPart.IsHidden || !v.MayUse(World.LocalId)) continue;
                 float d = Mathf.Min(Vector3.Distance(transform.position, v.Seat.position),
                                     Vector3.Distance(transform.position, v.transform.position));
-                if (d < bestDist) { bestDist = d; bestVehicle = v; }
+                if (d < bestDist) { bestDist = d; vehicle = v; }
             }
-            if (bestVehicle != null) { World.RequestEnter(bestVehicle); return; }
+            if (vehicle != null) return true;
 
             bestDist = enterRadius;
             foreach (var s in FindObjectsByType<SeatPart>(FindObjectsSortMode.None))
             {
                 if (!s.CanSit) continue;
                 float d = Vector3.Distance(transform.position, s.SitPoint.position);
-                if (d < bestDist) { bestDist = d; bestSeat = s; }
+                if (d < bestDist) { bestDist = d; chair = s; }
             }
-            if (bestSeat != null) World.RequestSit(bestSeat);
+            return chair != null;
         }
 
         public void Teleport(Vector3 position)
@@ -346,7 +368,7 @@ namespace JunkRace
         {
             hintPaint ??= new UiPainter("Управление", 15);
             hintPaint.Begin();
-            if (!InGameMenu.IsOpen) DrawHint();
+            if (!InGameMenu.IsOpen && !TouchControls.TouchMode) DrawHint();   // на сенсоре подписи на самих кнопках
             hintPaint.End();
         }
 

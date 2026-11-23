@@ -115,9 +115,9 @@ namespace JunkRace
 
         // ======================= Рисование =======================
 
-        public Text Label(Rect r, string text, Style st, float scale = 1f)
+        public UiText Label(Rect r, string text, Style st, float scale = 1f)
         {
-            var t = (Text)Next(Kind.Text, r, scale);
+            var t = (UiText)Next(Kind.Text, r, scale);
             if (t.text != text) t.text = text;
             int size = Mathf.Max(1, Mathf.RoundToInt(st.Size * Scale));
             if (t.fontSize != size) t.fontSize = size;
@@ -172,7 +172,7 @@ namespace JunkRace
         {
             var img = (Image)Next(Kind.Button, r, 1f);
             var b = img.GetComponent<Button>();
-            var t = img.GetComponentInChildren<Text>(true);
+            var t = img.GetComponentInChildren<UiText>(true);
             if (t.text != text) t.text = text;
             int size = Mathf.RoundToInt(fontSize * Scale);
             if (t.fontSize != size) t.fontSize = size;
@@ -181,41 +181,16 @@ namespace JunkRace
 
         // ======================= Размер текста =======================
 
-        static TextGenerator generator;
-
         /// <summary>Размер текста стилем st в одну строку (как GUIStyle.CalcSize) — в единицах прямоугольников (до Scale).</summary>
         public Vector2 Measure(string text, Style st)
         {
-            var s = Settings(st, HorizontalWrapMode.Overflow, 10000f);
-            return new Vector2(generator.GetPreferredWidth(text, s), generator.GetPreferredHeight(text, s)) / Scale;
+            return UiText.Measure(text, Mathf.Max(1, Mathf.RoundToInt(st.Size * Scale)), st.Bold, st.Rich, 0f) / Scale;
         }
 
         /// <summary>Высота текста с переносом по ширине width (как GUIStyle.CalcHeight) — в единицах прямоугольников.</summary>
         public float MeasureHeight(string text, Style st, float width)
         {
-            var s = Settings(st, HorizontalWrapMode.Wrap, width * Scale);
-            return generator.GetPreferredHeight(text, s) / Scale;
-        }
-
-        TextGenerationSettings Settings(Style st, HorizontalWrapMode wrap, float width)
-        {
-            generator ??= new TextGenerator();
-            return new TextGenerationSettings
-            {
-                font = Ui.Font,
-                fontSize = Mathf.Max(1, Mathf.RoundToInt(st.Size * Scale)),
-                fontStyle = st.Bold ? FontStyle.Bold : FontStyle.Normal,
-                richText = st.Rich,
-                scaleFactor = 1f,
-                lineSpacing = 1f,
-                textAnchor = TextAnchor.UpperLeft,
-                horizontalOverflow = wrap,
-                verticalOverflow = VerticalWrapMode.Overflow,
-                generationExtents = new Vector2(width, 10000f),
-                color = Color.white,
-                updateBounds = true,
-                pivot = Vector2.zero,
-            };
+            return UiText.Measure(text, Mathf.Max(1, Mathf.RoundToInt(st.Size * Scale)), st.Bold, st.Rich, width * Scale).y / Scale;
         }
 
         // ======================= Пул =======================
@@ -265,11 +240,7 @@ namespace JunkRace
             {
                 case Kind.Text:
                 {
-                    var t = rt.gameObject.AddComponent<Text>();
-                    t.font = Ui.Font;
-                    t.verticalOverflow = VerticalWrapMode.Overflow;
-                    t.raycastTarget = false;
-                    g = t;
+                    g = UiText.Add(rt.gameObject);
                     break;
                 }
                 case Kind.Raw:

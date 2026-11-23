@@ -9,6 +9,7 @@ namespace JunkRace
         float Throttle { get; }   // -1..1, газ/тормоз
         float Steer { get; }      // -1..1, руль
         bool Special { get; }     // спец-кнопка (зонт, пушка, клаксон)
+        bool Handbrake { get; }   // ручник: задние колёса блокируются — занос в поворот
     }
 
     /// <summary>Никто не управляет: всё по нулям.</summary>
@@ -18,5 +19,6 @@ namespace JunkRace
         public float Throttle => 0f;
         public float Steer => 0f;
         public bool Special => false;
+        public bool Handbrake => false;
     }
 }

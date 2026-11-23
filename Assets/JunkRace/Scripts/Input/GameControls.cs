@@ -23,7 +23,7 @@ namespace JunkRace
         public readonly InputAction Ready;
 
         // За рулём
-        public readonly InputAction Throttle, Steer, Special, Exit, Flip;
+        public readonly InputAction Throttle, Steer, Special, Exit, Flip, Handbrake;
 
         public GameControls()
         {
@@ -81,6 +81,11 @@ namespace JunkRace
             Exit = Driving.AddAction("Exit", InputActionType.Button, "<Keyboard>/f");
             Exit.AddBinding("<Gamepad>/buttonNorth");
 
+            // Ручник: Shift (пешком это бег, за рулём свободен), на геймпаде — B.
+            Handbrake = Driving.AddAction("Handbrake", InputActionType.Button, "<Keyboard>/leftShift");
+            Handbrake.AddBinding("<Keyboard>/rightShift");
+            Handbrake.AddBinding("<Gamepad>/buttonEast");
+
             Flip = Driving.AddAction("Flip", InputActionType.Button, "<Keyboard>/r");
             Flip.AddBinding("<Gamepad>/select");
 
@@ -112,5 +117,6 @@ namespace JunkRace
         public float Throttle => InGameMenu.Blocked ? 0f : controls.Throttle.ReadValue<float>();
         public float Steer => InGameMenu.Blocked ? 0f : controls.Steer.ReadValue<float>();
         public bool Special => !InGameMenu.Blocked && controls.Special.IsPressed();
+        public bool Handbrake => !InGameMenu.Blocked && controls.Handbrake.IsPressed();
     }
 }

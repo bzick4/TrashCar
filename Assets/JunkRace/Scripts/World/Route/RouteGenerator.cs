@@ -99,7 +99,14 @@ namespace JunkRace
         /// <summary>Участки трассы: прогресс начала (м от старта) и биом — по ним погода.</summary>
         public readonly List<float> SectionStarts = new List<float>();
         public readonly List<Biome> SectionBiomes = new List<Biome>();
-        public bool Generated => map != null;
+        /// <summary>Трасса построена и включена (RouteMap.Current выставлен).</summary>
+        public bool Generated => finalized;
+        bool finalized;
+        /// <summary>Стройка трассы по кусочкам (GenerateSteps), идёт в фоне ещё на свалке.</summary>
+        IEnumerator<object> job;
+        bool jobDone, jobFast;
+        int jobSeed;
+        List<string> jobNames;
 
         const float Step = 2f;
         const float SideTile = 6f;
@@ -173,6 +180,7 @@ namespace JunkRace
             BuildSurroundings();
             YardShuffle.Apply(seed, transform.position, Players);
             YardReady = true;
+            StartRouteJob();             // трасса начинает строиться в фоне, пока собирают машины
             DayNightCycle.Begin(seed);   // сутки идут с этого момента: час старта и восток — по сиду
             TestCarBuilder.Begin();      // тестовая трасса: машину соберёт сама
             Tutorial.Begin();            // обучение: шаги и раскладка деталей под них
@@ -231,12 +239,53 @@ namespace JunkRace
             root = null;
         }
 
-        /// <summary>Построить трассу по сиду (вторая загрузка, после сборки машин). Повторно — ничего.</summary>
+        // ---------------- Стройка трассы по кусочкам ----------------
+        // Трассу целиком за один кадр в браузере телефона не построить: мусор в памяти там убирается только
+        // между кадрами, за один длинный кадр он копится — память раздувается, и Telegram перезагружает страницу.
+        // Поэтому стройка — по кусочкам: начинается в фоне сразу, как разложена свалка (по чуть-чуть каждый кадр,
+        // пока игроки собирают машины), а по «Готов» остаток достраивается под экраном загрузки быстрее.
+        // Трасса строится выключенной и включается целиком в FinalizeRoute. Порядок шагов (и rng) тот же,
+        // что и раньше, — у всех игроков по одному сиду выходит одна и та же трасса.
+
+        /// <summary>Миллисекунд на стройку за кадр: на свалке — понемногу, под экраном загрузки — побольше.</summary>
+        float SliceBudget => jobFast ? 0.025f : (Application.isMobilePlatform || TouchControls.TouchMode ? 0.004f : 0.008f);
+
+        void StartRouteJob()
+        {
+            if (job != null || finalized || !YardReady) return;
+            jobDone = false;
+            job = GenerateSteps(Seed, Players);
+            StartCoroutine(DriveRouteJob());
+        }
+
+        System.Collections.IEnumerator DriveRouteJob()
+        {
+            while (job != null && !jobDone)
+            {
+                float t0 = Time.realtimeSinceStartup;
+                while (job != null && !jobDone && Time.realtimeSinceStartup - t0 < SliceBudget)
+                    if (!job.MoveNext()) jobDone = true;
+                yield return null;
+            }
+        }
+
+        /// <summary>Построить трассу сразу (зашёл посреди гонки): что не достроено — за этот кадр. Повторно — ничего.</summary>
         public void BuildRoute()
         {
-            if (Generated || !YardReady) return;
-            if (tempRoot != null) { Destroy(tempRoot.gameObject); tempRoot = null; }   // шлагбаум и заглушка — прочь
-            Generate(Seed, Players);
+            if (finalized || !YardReady) return;
+            StartRouteJob();
+            while (!jobDone && job != null) if (!job.MoveNext()) jobDone = true;
+            FinalizeRoute();
+        }
+
+        /// <summary>Вторая загрузка (после «Готов»): дождаться трассы, достраивая её быстрее, и включить.</summary>
+        public System.Collections.IEnumerator BuildRouteRoutine()
+        {
+            if (finalized || !YardReady) yield break;
+            jobFast = true;
+            StartRouteJob();
+            while (!jobDone) yield return null;
+            FinalizeRoute();
         }
 
         /// <summary>Сколько игроков на старте: от этого — сколько деталей на свалке.</summary>
@@ -251,8 +300,19 @@ namespace JunkRace
 
         // ============================ Генерация ============================
 
+        /// <summary>Построить трассу целиком сразу (редакторские инструменты и проверки).</summary>
         public void Generate(int seed, int players = 1)
         {
+            job = GenerateSteps(seed, players);
+            jobDone = false;
+            while (job.MoveNext()) { }
+            jobDone = true;
+            FinalizeRoute();
+        }
+
+        IEnumerator<object> GenerateSteps(int seed, int players)
+        {
+            jobSeed = seed;
             Seed = seed;
             Players = Mathf.Clamp(players, 1, 4);
             rng = new System.Random(seed);
@@ -277,6 +337,8 @@ namespace JunkRace
             map = new RouteMap { OffMargin = offRouteMargin };
             root = new GameObject("Маршрут").transform;
             root.SetParent(transform, false);
+            root.gameObject.SetActive(false);   // строится в фоне невидимой — включится целиком в FinalizeRoute
+            routeRoot = root;
             PreparePrimitives();
             smallLayer = LayerMask.NameToLayer(SmallDecorLayer);
             treeLayer = LayerMask.NameToLayer(TreeLayer);
@@ -308,9 +370,10 @@ namespace JunkRace
             if (tutorial) { fixedSections = 1; order = new List<Biome> { Biome.Forest }; test = false; }   // обучение: короткий лес
             else if (test) { fixedSections = 3; order = new List<Biome> { Biome.Forest, Biome.Snow, Biome.Mountains }; }   // сперва вода: брод, мост, потом тоннель
             var names = new List<string>();
+            jobNames = names;
             circuit = GameSession.IsCircuit && !test;
             map.Circuit = circuit;
-            if (circuit) BuildCircuit(names);
+            if (circuit) { BuildCircuit(names); yield return null; }
             else
             {
                 float target = SprintTarget[(int)GameSession.Size];
@@ -327,8 +390,9 @@ namespace JunkRace
                     float left = target - routeLength;
                     bool fork = rng.NextDouble() < 0.6 || forks == 0 && left < 700f;   // хотя бы одна развилка
                     int chunks = fixedSections > 0 ? 2 + rng.Next(2) : Mathf.Clamp(Mathf.RoundToInt((left - SectionOverhead(b)) / 90f), 1, 3);
-                    if (tutorial) { TutorialForest(); continue; }
+                    if (tutorial) { TutorialForest(); yield return null; continue; }
                     BuildSection(b, chunks, fork);
+                    yield return null;
                 }
 
                 // Финиш и площадка после него.
@@ -338,19 +402,43 @@ namespace JunkRace
                 Finish(end);
                 Run(main, 30f, 0f, 0f);
             }
-            ApplySun();
+            PickSun();   // солнце выбираем тут (порядок rng прежний), а ставим при включении трассы
+            yield return null;
 
             foreach (var p in map.Paths) p.SmoothForwards();
             foreach (var c in canyons) c.Fill();   // профиль ущелий — до декора: ему нужно знать, где низина
-            foreach (var p in map.Paths) if (p.BuildMesh) BuildRoadMesh(p);
+            yield return null;
+            foreach (var p in map.Paths) if (p.BuildMesh) { BuildRoadMesh(p); yield return null; }
             foreach (var f in forkFills) BuildForkFill(f.left, f.right);
             forkFills.Clear();
-            Decorate();
-            if (circuit) CircuitRidge();
+            yield return null;
+            var deco = DecorateSteps();
+            while (deco.MoveNext()) yield return null;
+            if (circuit) { CircuitRidge(); yield return null; }
             BuildGround();
+            yield return null;
             if (circuit) FinishCircuit();
+            root = null;
+        }
 
-            StaticBatchingUtility.Combine(root.gameObject);
+        Transform routeRoot;
+
+        /// <summary>Трасса достроена: включить её и всё, что от неё зависит (солнце, холмы, погода).</summary>
+        void FinalizeRoute()
+        {
+            if (finalized || !jobDone) return;
+            finalized = true;
+            job = null;
+            if (tempRoot != null) { Destroy(tempRoot.gameObject); tempRoot = null; }   // шлагбаум и заглушка — прочь
+            root = routeRoot;
+            int seed = jobSeed;
+            var names = jobNames ?? new List<string>();
+            root.gameObject.SetActive(true);
+            ApplyPickedSun();
+
+            // Веб (телефон в Telegram): склейка копирует меши всей трассы разом — пик памяти, на котором
+            // браузер убивает страницу. Там обходимся без неё (URP и так группирует отрисовку через SRP Batcher).
+            if (Application.platform != RuntimePlatform.WebGLPlayer) StaticBatchingUtility.Combine(root.gameObject);
             RouteMap.Current = map;
             ApplyCullDistances();
 
@@ -370,6 +458,7 @@ namespace JunkRace
                 ? $"Кольцо: {string.Join(" → ", names)} · круг ~{Mathf.RoundToInt(map.LapLength / 10f) * 10} м × {GameSession.Laps} · сид {seed}"
                 : $"Маршрут: {string.Join(" → ", names)} · развилок: {forks} · ~{Mathf.RoundToInt(routeLength / 10f) * 10} м · сид {seed}";
             Debug.Log("[JunkRace] " + Summary);
+            root = null;
         }
 
         // ============================ Длина гонки ============================
@@ -1515,17 +1604,32 @@ namespace JunkRace
         /// <summary>Солнце под своим углом на каждой трассе: тени и свет другие — и трасса ощущается иначе.</summary>
         void ApplySun()
         {
+            if (!sunPicked) return;
             var sun = RenderSettings.sun;
             if (sun == null)
                 foreach (var l in FindObjectsByType<Light>(FindObjectsSortMode.None))
                     if (l.type == LightType.Directional) { sun = l; break; }
             if (sun == null) return;
             if (!sunBaseSaved) { sunBaseColor = sun.color; sunBaseSaved = true; }
-            sun.transform.rotation = Quaternion.Euler(RandRange(28f, 62f), RandRange(0f, 360f), 0f);
+            sun.transform.rotation = sunPick;
             // Чуть теплее или холоднее: утро, день, вечер.
-            float warm = RandRange(-1f, 1f);
+            float warm = sunWarm;
             sun.color = sunBaseColor * new Color(1f + 0.08f * warm, 1f, 1f - 0.1f * warm);
         }
+
+        Quaternion sunPick;
+        float sunWarm;
+        bool sunPicked;
+
+        /// <summary>Солнце для трассы — по сиду, в том же месте rng, что и раньше; ставится в ApplyPickedSun.</summary>
+        void PickSun()
+        {
+            sunPick = Quaternion.Euler(RandRange(28f, 62f), RandRange(0f, 360f), 0f);
+            sunWarm = RandRange(-1f, 1f);
+            sunPicked = true;
+        }
+
+        void ApplyPickedSun() { if (sunPicked) ApplySun(); }
 
         bool sunBaseSaved;
         Color sunBaseColor;
@@ -2525,7 +2629,7 @@ namespace JunkRace
 
         // ============================ Декорации ============================
 
-        void Decorate()
+        IEnumerator<object> DecorateSteps()
         {
             foreach (var path in map.Paths)
             {
@@ -2566,6 +2670,7 @@ namespace JunkRace
 
                 for (float d = 0f; d < path.Length; d += 5f)
                 {
+                    if (d > 0f && Mathf.RoundToInt(d) % 60 == 0) yield return null;   // по ~60 м за шаг
                     var s = path.At(d);
                     for (int k = -1; k <= 1; k += 2)
                     {
