@@ -164,6 +164,7 @@ namespace JunkRace
             var d = new Doll { HipY = HipY };
             var cvm = root.AddComponent<CharacterVisual>();
             cvm.doll = d;
+            if (BuildRigged(root.transform, d, mat)) return root;
             if (BuildMannequin(root.transform, d, mat)) return root;
             DestroyImmediate(cvm);
 
@@ -271,6 +272,91 @@ namespace JunkRace
                 r.sharedMaterial = mat;
                 r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
             }
+            return true;
+        }
+
+        /// <summary>Лоу-поли персонаж со скелетом: Resources/JunkRace/Character (Kenney, кости Hips, *Arm, *UpLeg, *Leg).</summary>
+        public const string CharacterPath = "JunkRace/Character";
+        static GameObject character;
+        static bool characterLoaded;
+
+        /// <summary>
+        /// Персонаж со скелетом вместо манекена: кости бёдер, плеч, бёдер ног и голеней перевешиваем на шарниры
+        /// человечка — анимация та же, что у манекена. Руки из T-позы опускаем вдоль тела. Красим цветом игрока.
+        /// </summary>
+        static bool BuildRigged(Transform root, Doll d, Material mat)
+        {
+            if (!characterLoaded) { character = Resources.Load<GameObject>(CharacterPath); characterLoaded = true; }
+            if (character == null) return false;
+
+            var inst = Instantiate(character, root);
+            inst.name = "Скелет";
+            inst.transform.localPosition = Vector3.zero;
+            inst.transform.localRotation = Quaternion.identity;
+            inst.transform.localScale = Vector3.one;
+            foreach (var a in inst.GetComponentsInChildren<Animator>(true)) Destroy(a);
+
+            Transform Bone(string n)
+            {
+                foreach (var t in inst.GetComponentsInChildren<Transform>(true)) if (t.name == n) return t;
+                return null;
+            }
+            Transform hips = Bone("Hips"), armL = Bone("LeftArm"), armR = Bone("RightArm"), foreL = Bone("LeftForeArm"), foreR = Bone("RightForeArm"),
+                      upL = Bone("LeftUpLeg"), upR = Bone("RightUpLeg"), legL = Bone("LeftLeg"), legR = Bone("RightLeg"),
+                      foot = Bone("LeftFoot"), toes = Bone("LeftToes");
+            var smr = inst.GetComponentInChildren<SkinnedMeshRenderer>();
+            if (hips == null || armL == null || armR == null || foreL == null || foreR == null || upL == null || upR == null
+                || legL == null || legR == null || smr == null) { Destroy(inst); return false; }
+
+            // Рост и «на земле»: масштаб по высоте (ширина у T-позы обманчива).
+            Bounds b = RootBounds(inst, root);
+            if (b.size.y < 1e-3f) { Destroy(inst); return false; }
+            inst.transform.localScale = inst.transform.localScale * (DollHeight / b.size.y);
+            // Носки — вперёд (+Z).
+            if (foot != null && toes != null && root.InverseTransformPoint(toes.position).z < root.InverseTransformPoint(foot.position).z)
+                inst.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            b = RootBounds(inst, root);
+            inst.transform.localPosition -= new Vector3(b.center.x, b.min.y, b.center.z);
+
+            // Руки из T-позы — вниз, чуть в стороны от тела.
+            foreach (var (arm, fore) in new[] { (armL, foreL), (armR, foreR) })
+            {
+                Vector3 dir = fore.position - arm.position;
+                Vector3 side = root.InverseTransformDirection(dir);
+                Vector3 want = root.TransformDirection(new Vector3(Mathf.Sign(side.x) * 0.12f, -1f, 0f).normalized);
+                arm.rotation = Quaternion.FromToRotation(dir, want) * arm.rotation;
+            }
+
+            Vector3 At(Transform t) => root.InverseTransformPoint(t.position);
+            // Левая сторона — меньший x (как у человечка: Рука_Л на −X).
+            var arms = new System.Collections.Generic.List<Transform> { armL, armR };
+            var ups = new System.Collections.Generic.List<Transform> { upL, upR };
+            var legs = new System.Collections.Generic.List<Transform> { legL, legR };
+            arms.Sort((p, q) => At(p).x.CompareTo(At(q).x));
+            ups.Sort((p, q) => At(p).x.CompareTo(At(q).x));
+            legs.Sort((p, q) => At(p).x.CompareTo(At(q).x));
+
+            Vector3 hip = At(hips);
+            d.HipY = hip.y;
+            d.Body = Joint("Тело", root, new Vector3(0f, hip.y, 0f));
+            d.ArmL = Joint("Рука_Л", d.Body, At(arms[0]) - new Vector3(0f, hip.y, 0f));
+            d.ArmR = Joint("Рука_П", d.Body, At(arms[1]) - new Vector3(0f, hip.y, 0f));
+            d.LegL = Joint("Нога_Л", root, At(ups[0]));
+            d.LegR = Joint("Нога_П", root, At(ups[1]));
+            d.KneeL = Joint("Колено_Л", d.LegL, At(legs[0]) - At(ups[0]));
+            d.KneeR = Joint("Колено_П", d.LegR, At(legs[1]) - At(ups[1]));
+
+            // Кости — на шарниры (с сохранением позы): дальше их крутит общая анимация человечка.
+            hips.SetParent(d.Body, true);
+            arms[0].SetParent(d.ArmL, true); arms[1].SetParent(d.ArmR, true);
+            ups[0].SetParent(d.LegL, true); ups[1].SetParent(d.LegR, true);
+            legs[0].SetParent(d.KneeL, true); legs[1].SetParent(d.KneeR, true);
+            d.LegL.SetParent(d.Body, true);
+            d.LegR.SetParent(d.Body, true);
+
+            smr.sharedMaterial = mat;
+            smr.updateWhenOffscreen = true;   // кости уехали из исходной иерархии — рамку считаем по ним
+            smr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
             return true;
         }
 

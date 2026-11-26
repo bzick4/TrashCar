@@ -18,6 +18,8 @@ namespace JunkRace.EditorTools
         const string SettingsFolder = "Assets/JunkRace/Settings";
         const string FogMatPath = SettingsFolder + "/JR_Atmosphere.mat";
         const string SkyMatPath = SettingsFolder + "/JR_SkyGradient.mat";
+        const string PanoMatPath = SettingsFolder + "/JR_SkyPanorama.mat";
+        const string SkyArtFolder = "Assets/JunkRace/Art/Sky";
         const string TerrainMatPath = SettingsFolder + "/JR_ToonTerrain.mat";
         const string CrownMatPath = SettingsFolder + "/JR_TreeCrown.mat";
         const string TrunkMatPath = SettingsFolder + "/JR_TreeTrunk.mat";
@@ -77,7 +79,10 @@ namespace JunkRace.EditorTools
             so.FindProperty("treeTrunkMaterial").objectReferenceValue = trunkMat;
             so.ApplyModifiedPropertiesWithoutUndo();
 
-            if (skyMat != null) RenderSettings.skybox = skyMat;
+            // Нарисованные панорамы (Art/Sky/sky_day|sunset|dusk|night.png) важнее градиента.
+            var pano = PanoramaSky();
+            if (pano != null) RenderSettings.skybox = pano;
+            else if (skyMat != null) RenderSettings.skybox = skyMat;
             DynamicGI.UpdateEnvironment();
 
             if (cam != null)
@@ -90,6 +95,23 @@ namespace JunkRace.EditorTools
             }
 
             AssetDatabase.SaveAssets();
+        }
+
+        /// <summary>Материал неба из четырёх панорам; null — картинок нет.</summary>
+        static Material PanoramaSky()
+        {
+            var day = AssetDatabase.LoadAssetAtPath<Texture2D>(SkyArtFolder + "/sky_day.png");
+            if (day == null) return null;
+            var mat = LoadOrCreate(PanoMatPath, "JunkRace/Sky Panorama", null);
+            if (mat == null) return null;
+            mat.SetTexture("_DayTex", day);
+            foreach (var (prop, file) in new[] { ("_SunsetTex", "sky_sunset"), ("_DuskTex", "sky_dusk"), ("_NightTex", "sky_night") })
+            {
+                var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(SkyArtFolder + "/" + file + ".png");
+                mat.SetTexture(prop, tex != null ? tex : day);
+            }
+            EditorUtility.SetDirty(mat);
+            return mat;
         }
 
         /// <summary>Full Screen Pass с материалом дымки, перед постобработкой (после контуров).</summary>

@@ -255,7 +255,18 @@ namespace JunkRace.EditorTools
             SetObjects(gen, "treeModels", RouteTemplates(box, "Tree", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true));
             SetObjects(gen, "pineModels", RouteTemplates(box, "Pine", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true));
             // Ёлки в снегу: те же модели, текстура хвои заменена на *_snow.png рядом с исходной.
-            SetObjects(gen, "snowPineModels", SnowVariants(RouteTemplates(box, "Pine", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true)));
+            // Снежный биом: свои модели из Snow/ (ёлки tree_*, если есть, иначе — Pine с заснеженной текстурой).
+            var snowTrees = RouteTemplates(box, "Snow", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true, "tree_snow_a", "tree_snow_b");
+            SetObjects(gen, "snowPineModels", snowTrees.Count > 0 ? snowTrees
+                : SnowVariants(RouteTemplates(box, "Pine", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true)));
+            // Пустыня: те же деревья и ёлки, но с пустынной палитрой — зелень пыльно-рыжая.
+            var desertTrees = RouteTemplates(box, "Tree", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true);
+            desertTrees.AddRange(RouteTemplates(box, "Pine", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true));
+            SetObjects(gen, "desertTreeModels", DesertVariants(desertTrees));
+            SetObjects(gen, "snowMountainModels", RouteTemplates(box, "Snow", Vector3.zero, Vector3.one, false, "mountain_rocks_large", "mountain_rocks_medium"));
+            SetObjects(gen, "snowStoneModels", RouteTemplates(box, "Snow", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true, "stone_rocks_small"));
+            SetObjects(gen, "driftModels", RouteTemplates(box, "Snow", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true, "drift_pile", "drift_bunker"));
+            SetObjects(gen, "snowmanModels", RouteTemplates(box, "Snow", new Vector3(0f, 0.5f, 0f), new Vector3(100f, 1f, 100f), true, "snowman"));
             SetObjects(gen, "rockModels", RouteTemplates(box, "Rock", Vector3.zero, Vector3.one, false));
             // Горы на горизонте (со снежными шапками): вписаны в единичный куб, как и сферы-заглушки.
             SetObjects(gen, "mountainModels", RouteTemplates(box, "Mountain", Vector3.zero, Vector3.one, false));
@@ -389,6 +400,42 @@ namespace JunkRace.EditorTools
                 e.FindPropertyRelative("To").enumValueIndex = (int)to;
                 e.FindPropertyRelative("Material").objectReferenceValue = m;
             }
+        }
+
+        /// <summary>Пустынные копии образцов: материал палитры JunkPalette заменён на JunkPalette_Desert (зелёный → рыжий).</summary>
+        static List<GameObject> DesertVariants(List<GameObject> templates)
+        {
+            // Любой материал, у которого текстура — JunkPalette (в т.ч. toon), получает копию с пустынной палитрой.
+            var desertTex = JunkRace.EditorTools.FlatGroundTextures.MakeDesertPalette().GetTexture("_BaseMap");
+            var palette = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/JunkRace/Art/Palette/JunkPalette.png");
+            var swapped = new Dictionary<Material, Material>();
+            foreach (var t in templates)
+            {
+                t.name += "_desert";
+                foreach (var r in t.GetComponentsInChildren<Renderer>(true))
+                {
+                    var mats = r.sharedMaterials;
+                    for (int i = 0; i < mats.Length; i++)
+                    {
+                        var m = mats[i];
+                        if (m == null) continue;
+                        if (!swapped.TryGetValue(m, out var d))
+                        {
+                            d = m;
+                            foreach (var prop in new[] { "_BaseMap", "_MainTex" })
+                                if (m.HasProperty(prop) && m.GetTexture(prop) == palette)
+                                {
+                                    if (d == m) d = new Material(m) { name = m.name + " desert" };
+                                    d.SetTexture(prop, desertTex);
+                                }
+                            swapped[m] = d;
+                        }
+                        mats[i] = d;
+                    }
+                    r.sharedMaterials = mats;
+                }
+            }
+            return templates;
         }
 
         /// <summary>
@@ -614,8 +661,8 @@ namespace JunkRace.EditorTools
                 MakeWheel(yard, "Люк", "Чугунный. Тяжёлый, цепкий и не отваливается никогда.", 40f, 0.35f, 650f, 900f,
                           new Color(0.3f, 0.3f, 0.32f), WheelStyle.Manhole, thickness: 0.04f, breakImpulse: 3000f, rolling: 5f, model: "luk_wheel"));
             Scaled(yard, new[] { 2, 3, 4, 4 }, () =>
-                MakeWheel(yard, "Велосипедное колесо", "Большое и лёгкое. Катится легко, держит плохо, отлетает от чиха.", 2f, 0.6f, 400f, 250f,
-                          rubber, WheelStyle.Bicycle, thickness: 0.025f, breakImpulse: 250f, rolling: 1.5f, model: "bmx_wheel"));
+                MakeWheel(yard, "Колесо от телеги", "Деревянное, большое и лёгкое. Катится легко, держит плохо, отлетает от чиха.", 2f, 0.6f, 400f, 250f,
+                          rubber, WheelStyle.Bicycle, thickness: 0.025f, breakImpulse: 250f, rolling: 1.5f, model: "cart_wheel"));
             Scaled(yard, new[] { 2, 3, 4, 5 }, () =>
                 MakeWheel(yard, "Спасательный круг", "В воде — лучшее колесо. На дороге мягкий и вязкий: нужен мотор помощнее.", 2f, 0.4f, 250f, 220f,
                           new Color(1f, 0.45f, 0.1f), WheelStyle.Ring, thickness: 0.12f, rolling: 8f, buoyancy: 1500f, paddle: 1.6f, model: "sos_wheel"));

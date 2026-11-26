@@ -1,0 +1,114 @@
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,
+        initial-scale=1.0, maximum-scale=1.0,
+        user-scalable=no, viewport-fit=cover">
+
+    <title>JunkRace</title>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100dvh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #171717;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+
+        .menu {
+            width: 100%;
+            max-width: 420px;
+            padding: 24px;
+            text-align: center;
+        }
+
+        .logo {
+            width: 100%;
+            max-width: 320px;
+            margin-bottom: 40px;
+        }
+
+        .button {
+            display: block;
+            width: 100%;
+            padding: 20px;
+            margin-bottom: 16px;
+            border: 3px solid #38200e;
+            border-radius: 14px;
+            background: linear-gradient(#ffad32, #df6917);
+            box-shadow: 0 5px 0 #38200e;
+            color: white;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .button:active {
+            transform: translateY(4px);
+            box-shadow: 0 1px 0 #38200e;
+        }
+
+        .secondary {
+            background: linear-gradient(#555, #303030);
+            border-color: #111;
+            box-shadow: 0 5px 0 #111;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="menu">
+
+        <img class="logo"
+             src="https://raw.githubusercontent.com/bzick4/TrashCar/main/Assets/JunkRace/Resources/UI/logo.png"
+             alt="JunkRace">
+
+        <button class="button" onclick="playTelegram()">
+            Играть в Telegram
+        </button>
+
+        <button class="button secondary" onclick="playItch()">
+            Играть на itch.io
+        </button>
+
+    </div>
+
+    <script>
+        const tg = window.Telegram?.WebApp;
+
+        if (tg) {
+            tg.ready();
+            tg.expand();
+        }
+
+        function playTelegram() {
+            window.location.href =
+                "https://bzick4.github.io/junkrace_tg/";
+        }
+
+        function playItch() {
+            const url = "https://bzick4.itch.io/junk-race";
+
+            if (tg && tg.initData) {
+                tg.openLink(url);
+            } else {
+                window.location.href = url;
+            }
+        }
+    </script>
+
+</body>
+</html>

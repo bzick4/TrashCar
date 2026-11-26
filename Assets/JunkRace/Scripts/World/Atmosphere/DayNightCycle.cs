@@ -35,17 +35,18 @@ namespace JunkRace
         // ---- Палитры ----
         static readonly StylizedAtmosphere.Palette Day = new StylizedAtmosphere.Palette
         {
-            Zenith = new Color(0.30f, 0.55f, 0.92f), Horizon = new Color(0.84f, 0.90f, 0.97f), Near = new Color(0.76f, 0.84f, 0.92f),
+            // Цвета дымки взяты с панорам неба (Art/Sky): дымка у горизонта сливается с картинкой.
+            Zenith = new Color(0.58f, 0.73f, 0.94f), Horizon = new Color(0.71f, 0.78f, 0.95f), Near = new Color(0.70f, 0.76f, 0.91f),
             Glow = new Color(1f, 0.88f, 0.66f), GlowStrength = 0.35f,
         };
         static readonly StylizedAtmosphere.Palette Golden = new StylizedAtmosphere.Palette
         {
-            Zenith = new Color(0.40f, 0.52f, 0.80f), Horizon = new Color(0.98f, 0.74f, 0.52f), Near = new Color(0.86f, 0.73f, 0.62f),
+            Zenith = new Color(0.99f, 0.91f, 0.83f), Horizon = new Color(0.98f, 0.87f, 0.77f), Near = new Color(0.95f, 0.79f, 0.71f),
             Glow = new Color(1f, 0.64f, 0.36f), GlowStrength = 0.75f,
         };
         static readonly StylizedAtmosphere.Palette Night = new StylizedAtmosphere.Palette
         {
-            Zenith = new Color(0.03f, 0.05f, 0.13f), Horizon = new Color(0.11f, 0.15f, 0.29f), Near = new Color(0.09f, 0.12f, 0.21f),
+            Zenith = new Color(0.11f, 0.16f, 0.33f), Horizon = new Color(0.17f, 0.22f, 0.40f), Near = new Color(0.14f, 0.17f, 0.33f),
             Glow = new Color(0.78f, 0.85f, 1f), GlowStrength = 0.3f,   // ореол луны
         };
         static readonly Color SunDay = new Color(1f, 0.95f, 0.86f), SunLow = new Color(1f, 0.70f, 0.44f), Moon = new Color(0.62f, 0.72f, 1f);
@@ -68,9 +69,13 @@ namespace JunkRace
 
         void Awake() => Instance = this;
 
+        static readonly int SkyBlendId = Shader.PropertyToID("_JR_SkyBlend");
+        static readonly int SkyYawId = Shader.PropertyToID("_JR_SkyYaw");
+
         void OnDestroy()
         {
             if (Instance == this) Instance = null;
+            Shader.SetGlobalVector(SkyBlendId, Vector4.zero);   // без смены суток небо — дневное
         }
 
         /// <summary>Секунды с начала отсчёта: в сети — серверное время (у всех одно), иначе свои часы.</summary>
@@ -107,6 +112,12 @@ namespace JunkRace
             var pal = StylizedAtmosphere.Palette.Lerp(Golden, Day, day);
             pal = StylizedAtmosphere.Palette.Lerp(pal, Night, nightK);
             if (StylizedAtmosphere.Instance != null) StylizedAtmosphere.Instance.SetTimeOfDay(pal, Ramp(-2f, -12f, elev));
+
+            // Небо-панорама (JunkRace/Sky Panorama): веса картинок день / закат / сумерки с луной / глубокая ночь
+            // и азимут солнца — нарисованное солнце стоит там же, где настоящее.
+            float deep = Ramp(-15f, -45f, elev);
+            Shader.SetGlobalVector(SkyBlendId, new Vector4(day * (1f - nightK), (1f - day) * (1f - nightK), nightK * (1f - deep), nightK * deep));
+            Shader.SetGlobalFloat(SkyYawId, (yaw + 180f) * Mathf.Deg2Rad);
 
             // Свет: над горизонтом — солнце, ниже — луна с другой стороны неба. Смена — в сумерках,
             // когда свет почти погас, поэтому скачок направления не заметен. Низко не опускаем — тени не бесконечные.

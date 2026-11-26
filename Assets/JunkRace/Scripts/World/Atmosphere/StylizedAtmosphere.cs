@@ -207,7 +207,7 @@ namespace JunkRace
             Shader.SetGlobalColor(FarId, Color.Lerp(pal.Horizon, wc, w));
             Shader.SetGlobalColor(ZenithId, Color.Lerp(pal.Zenith, wc, w * 0.7f));
             Shader.SetGlobalColor(SunId, new Color(pal.Glow.r, pal.Glow.g, pal.Glow.b, pal.GlowStrength * (1f - w)));
-            Shader.SetGlobalVector(NightId, new Vector4(night * (1f - w), 0f, 0f, 0f));
+            Shader.SetGlobalVector(NightId, new Vector4(night * (1f - w), w, 0f, 0f));   // y — непогода (затягивает небо-панораму)
             Shader.SetGlobalVector(SunDirId, new Vector4(toSun.x, toSun.y, toSun.z, 1f));
             Shader.SetGlobalVector(DistId, new Vector4(startDistance * Mathf.Lerp(1f, 0.2f, w), Mathf.Max(1f, halfDistance * weatherDistance),
                                                        Mathf.Lerp(maxOpacity, 1f, w), 0f));

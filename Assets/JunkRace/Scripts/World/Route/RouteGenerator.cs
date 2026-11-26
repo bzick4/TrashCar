@@ -56,6 +56,13 @@ namespace JunkRace
         [SerializeField] RoadTransition[] roadTransitions;
         [Tooltip("Ёлки в снегу: те же модели, текстура хвои с белым (Pine/*_textures/*_snow.png).")]
         [SerializeField] GameObject[] snowPineModels;
+        [Tooltip("Снежный биом (Assets/Prefab/Route/Snow): горы mountain_*, камни stone_*, сугробы drift_*, снеговик.")]
+        [SerializeField] GameObject[] snowMountainModels;
+        [SerializeField] GameObject[] snowStoneModels;
+        [SerializeField] GameObject[] driftModels;
+        [SerializeField] GameObject[] snowmanModels;
+        [Tooltip("Пустыня: обычные деревья и ёлки с пустынной палитрой (зелень пыльно-рыжая).")]
+        [SerializeField] GameObject[] desertTreeModels;
         [Header("Мелочь у дороги (Assets/Prefab/Route: bush, Stone, Other)")]
         [SerializeField] GameObject[] bushModels;
         [SerializeField] GameObject[] stoneModels;
@@ -225,14 +232,9 @@ namespace JunkRace
             var boom = Piece("Шлагбаум", cube, new Vector3(g.x, 0.6f, g.z + BoomZ), Quaternion.identity, new Vector3(14f, 1.2f, 0.4f), new Color(0.9f, 0.15f, 0.1f), Col.Box);
             if (Any(boomModels))
             {
-                // Два шлагбаума навстречу: столбы по краям выезда, стрелы сходятся посередине. Коробка — только коллайдер.
+                // Одна арка-ворота во всю ширину выезда. Коробка — только коллайдер (стартовая блокировка).
                 Hidden(boom);
-                const float reach = 7.4f, height = 3.4f;
-                for (int k = -1; k <= 1; k += 2)
-                {
-                    var rot = Quaternion.Euler(0f, k < 0 ? 180f : 0f, 0f);   // в модели столб справа: левый шлагбаум развёрнут
-                    Model(boomModels, new Vector3(g.x + k * reach / 2f, 0f, g.z + BoomZ), rot, new Vector3(reach, height, 0.9f * 2f), Decor.Solid);
-                }
+                Model(boomModels, new Vector3(g.x, 0f, g.z + BoomZ), Quaternion.identity, new Vector3(15f, 4f, 0.9f * 2f), Decor.Solid);
             }
             else
                 Piece("Шлагбаум_полоса", cube, new Vector3(g.x, 0.6f, g.z + BoomZ - 0.22f), Quaternion.identity, new Vector3(14.02f, 0.3f, 0.02f), Color.white, Col.None);
@@ -736,15 +738,10 @@ namespace JunkRace
             col.size = new Vector3(span, 2.4f, 0.6f);
             if (Any(boomModels))
             {
-                // Два шлагбаума навстречу (как на выезде со свалки); в модели столб справа — левый развёрнут.
-                float reach = span / 2f + 0.2f;
-                for (int k = -1; k <= 1; k += 2)
-                {
-                    var m = Model(boomModels, s.Pos + s.Right * k * reach / 2f, rot * Quaternion.Euler(0f, k < 0 ? 180f : 0f, 0f),
-                                  new Vector3(reach, 3.2f, 0.9f * 2f), Decor.Solid);
-                    m.transform.SetParent(go.transform, true);
-                    foreach (var t in m.GetComponentsInChildren<Transform>(true)) t.gameObject.isStatic = false;
-                }
+                // Одна арка-ворота во всю ширину дороги (как на выезде со свалки).
+                var m = Model(boomModels, s.Pos, rot, new Vector3(span + 0.4f, 4f, 0.9f * 2f), Decor.Solid);
+                m.transform.SetParent(go.transform, true);
+                foreach (var t in m.GetComponentsInChildren<Transform>(true)) t.gameObject.isStatic = false;
             }
             else
             {
@@ -1472,6 +1469,18 @@ namespace JunkRace
                 Scatter(bushModels, s, side, 2f, 15f, 0.4f, 0.8f, 1f);
             if (Any(junkModels) && rng.NextDouble() < 0.05)
                 Scatter(junkModels, s, side, 1.5f, 10f, 0.6f, 1f, 1f, true);
+            // Редкие выжженные деревья и ёлки (пыльно-рыжая крона).
+            if (Any(desertTreeModels) && rng.NextDouble() < 0.1)
+            {
+                Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + RandRange(4f, 35f)) + s.Forward * RandRange(-2f, 2f);
+                p.y = GroundY;
+                if (map.IsClear(p, 2f) && !InRiver(p, 2f))
+                {
+                    float h = RandRange(3.5f, 6.5f);
+                    Hidden(Piece("Ствол", cylinder, p + Vector3.up * (h * 0.3f), Quaternion.identity, new Vector3(0.4f, h * 0.3f, 0.4f), Color.white, Col.Capsule, Decor.Tree));
+                    Model(desertTreeModels, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), Vector3.one * h, Decor.Tree);
+                }
+            }
             // Скалы средней дистанции и столовые горы на горизонте — вместо леса.
             if (Any(rockModels) && rng.NextDouble() < 0.14)
             {
@@ -2812,8 +2821,8 @@ namespace JunkRace
                 if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 1.25f) && !InRiver(p, r * 1.25f))
                 {
                     float h = RandRange(0.6f, 1f);
-                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
-                          new Vector3(r * 2f, r * 1.6f * h, r * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
+                    Model(mountainModels, new Vector3(p.x, GroundY + r * MountainBoost * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * MountainBoost * 2f, r * MountainBoost * 1.6f * h, r * MountainBoost * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
                 }
             }
             if (Any(stoneModels) && rng.NextDouble() < 0.3)
@@ -2833,8 +2842,8 @@ namespace JunkRace
                 {
                     // Модель горы уже со снегом: стоит низом на земле, только поворот по вертикали.
                     float k = RandRange(0.8f, 1.2f);
-                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
-                          new Vector3(r * 2f, r * 1.6f * h, r * 2f * k), Decor.Far);
+                    Model(mountainModels, new Vector3(p.x, GroundY + r * MountainBoost * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * MountainBoost * 2f, r * MountainBoost * 1.6f * h, r * MountainBoost * 2f * k), Decor.Far);
                     return;
                 }
                 Piece("Гора", sphere, p, Quaternion.Euler(0f, RandRange(0f, 360f), 0f), new Vector3(r * 2f, r * 2f * h, r * 2f * RandRange(0.8f, 1.2f)),
@@ -2861,7 +2870,11 @@ namespace JunkRace
                     if (map.IsClear(p, 2.5f) && !InRiver(p, 2.5f)) Pine(p, true);
                 }
             // Сугробы у обочины (без коллайдера — просто вид).
-            if (rng.NextDouble() < 0.3)
+            if (Any(driftModels))
+            {
+                if (rng.NextDouble() < 0.35) Scatter(driftModels, s, side, 1f, 12f, 0.6f, 1.6f, 1.5f);
+            }
+            else if (rng.NextDouble() < 0.3)
             {
                 Vector3 p = s.Pos + s.Right * side * (s.HalfWidth + RandRange(1f, 10f)) + s.Forward * RandRange(-2f, 2f);
                 float r = RandRange(1f, 2.5f);
@@ -2869,8 +2882,14 @@ namespace JunkRace
                     Piece("Сугроб", sphere, new Vector3(p.x, GroundY, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
                           new Vector3(r * 2f, r * RandRange(0.5f, 0.8f), r * RandRange(1.2f, 1.8f)), SnowWhite, Col.None, Decor.Small);
             }
+            // Камни из-под снега и редкий снеговик у обочины (для антуража).
+            if (Any(snowStoneModels) && rng.NextDouble() < 0.12)
+                Scatter(snowStoneModels, s, side, 1.5f, 14f, 0.4f, 1.1f, 1f, true);
+            if (Any(snowmanModels) && rng.NextDouble() < 0.015)
+                Scatter(snowmanModels, s, side, 2f, 6f, 1.6f, 2f, 1f, true);
             RoadsideExtras(s, side, false);
-            if (!Any(mountainModels)) return;
+            var mountains = Any(snowMountainModels) ? snowMountainModels : mountainModels;
+            if (!Any(mountains)) return;
             // Снежные горы рядом: ближе и чаще, чем в горном биоме.
             if (rng.NextDouble() < 0.1)
             {
@@ -2879,8 +2898,8 @@ namespace JunkRace
                 if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 1.25f) && !InRiver(p, r * 1.25f))
                 {
                     float h = RandRange(0.8f, 1.3f);
-                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
-                          new Vector3(r * 2f, r * 1.6f * h, r * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
+                    Model(mountains, new Vector3(p.x, GroundY + r * MountainBoost * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * MountainBoost * 2f, r * MountainBoost * 1.6f * h, r * MountainBoost * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
                 }
             }
             if (rng.NextDouble() < 0.1)
@@ -2890,8 +2909,8 @@ namespace JunkRace
                 if (map.IsClear(new Vector3(p.x, GroundY, p.z), r * 1.25f) && !InRiver(p, r * 1.25f))
                 {
                     float h = RandRange(1f, 1.5f);
-                    Model(mountainModels, new Vector3(p.x, GroundY + r * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
-                          new Vector3(r * 2f, r * 1.6f * h, r * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
+                    Model(mountains, new Vector3(p.x, GroundY + r * MountainBoost * 1.6f * h * 0.5f, p.z), Quaternion.Euler(0f, RandRange(0f, 360f), 0f),
+                          new Vector3(r * MountainBoost * 2f, r * MountainBoost * 1.6f * h, r * MountainBoost * 2f * RandRange(0.8f, 1.2f)), Decor.Far);
                 }
             }
         }
@@ -3071,6 +3090,9 @@ namespace JunkRace
         }
 
         /// <summary>Арка (старт, финиш).</summary>
+        /// <summary>Горы и холмы из моделей крупнее расчётного радиуса — смотрятся внушительнее на горизонте.</summary>
+        const float MountainBoost = 1.6f;
+
         // Арка-модель: просвет между башнями — 42% ширины, его середина — на 47% ширины слева (модель чуть несимметрична).
         const float ArchGap = 0.42f, ArchGapCenter = 0.47f;
 
