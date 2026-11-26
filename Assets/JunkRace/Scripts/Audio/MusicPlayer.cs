@@ -16,6 +16,8 @@ namespace JunkRace
     {
         public const string Folder = "Audio/Music/";
         const float FadeTime = 1.5f;
+        const float LoadTimeout = 8f;
+        const float RetryDelay = 0.5f;
         const float BaseVolume = 0.7f;   // музыка не должна забивать мотор
 
         enum Mood { Menu, Yard, Race }
@@ -28,6 +30,13 @@ namespace JunkRace
         Mood mood;
         bool started;
         AudioClip last;
+        AudioClip pending;
+        float loadDeadline, nextLoadCheck, retryAt, playbackGraceUntil;
+        readonly HashSet<AudioClip> unavailable = new HashSet<AudioClip>();
+#if UNITY_EDITOR
+        UnityEngine.Networking.UnityWebRequest editorPreviewRequest;
+        readonly HashSet<AudioClip> editorPreviewClips = new HashSet<AudioClip>();
+#endif
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
@@ -38,12 +47,26 @@ namespace JunkRace
             instance = go.AddComponent<MusicPlayer>();
         }
 
-        void Awake()
+        void OnEnable()
         {
-            active = MakeSource();
-            fading = MakeSource();
-            foreach (Mood m in System.Enum.GetValues(typeof(Mood)))
-                clips[m] = Resources.LoadAll<AudioClip>(Folder + m);
+            instance = this;
+            if (active == null) active = MakeSource();
+            if (fading == null) fading = MakeSource();
+            if (clips.Count == 0)
+                foreach (Mood m in System.Enum.GetValues(typeof(Mood)))
+                    clips[m] = Resources.LoadAll<AudioClip>(Folder + m);
+        }
+
+        void OnDisable()
+        {
+            if (instance == this) instance = null;
+            pending = null;
+#if UNITY_EDITOR
+            editorPreviewRequest?.Dispose();
+            editorPreviewRequest = null;
+            ReleaseEditorPreview(active);
+            ReleaseEditorPreview(fading);
+#endif
         }
 
         AudioSource MakeSource()
@@ -127,7 +150,11 @@ namespace JunkRace
                 mood = m;
                 PlayNext();
             }
-            else if (active.clip != null && (!active.isPlaying || active.time >= active.clip.length - FadeTime))
+            else if (pending != null)
+                CheckPending();
+            else if (Time.unscaledTime >= retryAt && (active.clip == null
+                     || (active.isPlaying ? active.time >= active.clip.length - FadeTime
+                                          : Time.unscaledTime >= playbackGraceUntil)))
                 PlayNext();
 
             float dt = Time.unscaledDeltaTime;
@@ -136,7 +163,13 @@ namespace JunkRace
             float vol = GameAudio.Music * BaseVolume;
             active.volume = activeWeight * vol;
             fading.volume = fadingWeight * vol;
-            if (fadingWeight <= 0f && fading.isPlaying) fading.Stop();
+            if (fadingWeight <= 0f)
+            {
+                if (fading.isPlaying) fading.Stop();
+#if UNITY_EDITOR
+                ReleaseEditorPreview(fading);
+#endif
+            }
         }
 
         /// <summary>Следующий трек: в плейлисте — по списку, иначе — по настроению экрана.</summary>
@@ -145,16 +178,118 @@ namespace JunkRace
             if (manual)
             {
                 var list = AllTracks();
-                if (list.Count == 0) return;
-                manualIndex = (manualIndex + 1) % list.Count;
-                Begin(list[manualIndex]);
+                for (int i = 0; i < list.Count; i++)
+                {
+                    manualIndex = (manualIndex + 1) % list.Count;
+                    if (unavailable.Contains(list[manualIndex])) continue;
+                    Begin(list[manualIndex]);
+                    return;
+                }
+                manual = false;
+            }
+            var clip = Pick(mood);
+            if (clip != null || active.isPlaying) Begin(clip);
+            else retryAt = Time.unscaledTime + RetryDelay;
+        }
+
+        void Begin(AudioClip clip)
+        {
+#if UNITY_EDITOR
+            editorPreviewRequest?.Dispose();
+            editorPreviewRequest = null;
+#endif
+            pending = null;
+#if UNITY_EDITOR
+            // При выбранном WebGL редактор может не воспроизвести платформенный импорт.
+            // Для локального предпросмотра открываем исходный OGG. В сборке этот путь отсутствует.
+            if (clip != null && UnityEditor.EditorUserBuildSettings.activeBuildTarget == UnityEditor.BuildTarget.WebGL)
+            {
+                string path = UnityEditor.AssetDatabase.GetAssetPath(clip);
+                if (path.EndsWith(".ogg", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    var uri = new System.Uri(System.IO.Path.GetFullPath(path));
+                    editorPreviewRequest = UnityEngine.Networking.UnityWebRequestMultimedia.GetAudioClip(
+                        uri.AbsoluteUri, AudioType.OGGVORBIS);
+                    editorPreviewRequest.timeout = Mathf.CeilToInt(LoadTimeout);
+                    editorPreviewRequest.SendWebRequest();
+                    pending = clip;
+                    loadDeadline = Time.unscaledTime + LoadTimeout;
+                    nextLoadCheck = Time.unscaledTime;
+                    return;
+                }
+            }
+#endif
+            if (clip == null || clip.loadType == AudioClipLoadType.Streaming)
+            {
+                StartClip(clip);
                 return;
             }
-            Begin(Pick(mood));
+
+            var state = clip.loadState;
+            if (state == AudioDataLoadState.Loaded)
+            {
+                StartClip(clip);
+                return;
+            }
+
+            if (state == AudioDataLoadState.Failed || (state == AudioDataLoadState.Unloaded && !clip.LoadAudioData()))
+            {
+                SkipFailed(clip);
+                return;
+            }
+
+            pending = clip;
+            loadDeadline = Time.unscaledTime + LoadTimeout;
+            nextLoadCheck = Time.unscaledTime + 0.1f;
+        }
+
+        void CheckPending()
+        {
+            float now = Time.unscaledTime;
+            if (now < nextLoadCheck) return;
+            nextLoadCheck = now + 0.1f;
+#if UNITY_EDITOR
+            if (editorPreviewRequest != null)
+            {
+                if (!editorPreviewRequest.isDone && now < loadDeadline) return;
+                using (var request = editorPreviewRequest)
+                {
+                    editorPreviewRequest = null;
+                    var original = pending;
+                    var decoded = request.result == UnityEngine.Networking.UnityWebRequest.Result.Success
+                        ? UnityEngine.Networking.DownloadHandlerAudioClip.GetContent(request) : null;
+                    if (decoded != null)
+                    {
+                        pending = null;
+                        decoded.name = original.name;
+                        editorPreviewClips.Add(decoded);
+                        StartClip(decoded, original);
+                    }
+                    else SkipFailed(original);
+                }
+                return;
+            }
+#endif
+            var state = pending.loadState;
+            if (state == AudioDataLoadState.Loaded)
+            {
+                var clip = pending;
+                pending = null;
+                StartClip(clip);
+            }
+            else if (state == AudioDataLoadState.Failed || now >= loadDeadline)
+                SkipFailed(pending);
+        }
+
+        void SkipFailed(AudioClip clip)
+        {
+            unavailable.Add(clip);
+            pending = null;
+            retryAt = Time.unscaledTime + RetryDelay;
         }
 
         /// <summary>Трек плавно заменяет играющий: текущий уходит в затухание, новый нарастает.</summary>
-        void Begin(AudioClip clip)
+        void StartClip(AudioClip clip, AudioClip original = null)
         {
             if (clip == null && active.clip == null) return;
             if (clip == active.clip && active.isPlaying && active.time < active.clip.length - FadeTime) return;
@@ -163,11 +298,27 @@ namespace JunkRace
             (active, fading) = (fading, active);
             fadingWeight = activeWeight;
             activeWeight = 0f;
+#if UNITY_EDITOR
+            ReleaseEditorPreview(active);
+#endif
             active.clip = clip;
+            playbackGraceUntil = Time.unscaledTime + RetryDelay;
             if (clip != null) active.Play();
-            last = clip;
+            last = original != null ? original : clip;
             if (clip != null) ShowNowPlaying(clip);
         }
+
+#if UNITY_EDITOR
+        void ReleaseEditorPreview(AudioSource source)
+        {
+            if (source == null || source.clip == null || !editorPreviewClips.Remove(source.clip)) return;
+            var clip = source.clip;
+            source.Stop();
+            source.clip = null;
+            Destroy(clip);
+        }
+
+#endif
 
         // ============================ Плашка «сейчас играет» ============================
         // Анимация — DOTween: твин крутит npShow (0 — спрятана, 1 — на месте), рисовалка UGUI просто рисует по нему.
@@ -275,20 +426,27 @@ namespace JunkRace
         AudioClip Pick(Mood m)
         {
             var set = clips[m];
-            if (set.Length == 0)
+            if (!System.Array.Exists(set, clip => !unavailable.Contains(clip)))
             {
-                // Нет музыки под этот экран — из любой непустой папки.
-                foreach (var kv in clips) if (kv.Value.Length > 0) { set = kv.Value; m = kv.Key; break; }
-                if (set.Length == 0) return null;
+                // Нет доступного трека под этот экран — берём из другой папки.
+                foreach (var kv in clips)
+                {
+                    if (!System.Array.Exists(kv.Value, clip => !unavailable.Contains(clip))) continue;
+                    set = kv.Value;
+                    m = kv.Key;
+                    break;
+                }
             }
-            if (!queue.TryGetValue(m, out var q) || q.Count == 0)
+            if (!queue.TryGetValue(m, out var q)) queue[m] = q = new List<int>();
+            q.RemoveAll(i => unavailable.Contains(set[i]));
+            if (q.Count == 0)
             {
-                q = new List<int>();
-                for (int i = 0; i < set.Length; i++) q.Add(i);
+                for (int i = 0; i < set.Length; i++)
+                    if (!unavailable.Contains(set[i])) q.Add(i);
                 for (int i = q.Count - 1; i > 0; i--) { int j = Random.Range(0, i + 1); (q[i], q[j]) = (q[j], q[i]); }
                 if (q.Count > 1 && set[q[0]] == last) (q[0], q[1]) = (q[1], q[0]);   // не тот же трек подряд
-                queue[m] = q;
             }
+            if (q.Count == 0) return null;
             var clip = set[q[0]];
             q.RemoveAt(0);
             return clip;

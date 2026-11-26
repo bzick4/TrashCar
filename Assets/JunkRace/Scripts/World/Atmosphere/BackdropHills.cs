@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Serialization;
 
 namespace JunkRace
 {
@@ -54,8 +55,9 @@ namespace JunkRace
         [SerializeField] float farHeight = 300f;
         [Tooltip("Размер холмов по горизонтали, м.")]
         [SerializeField] float featureSize = 380f;
-        [Tooltip("Расстояние между грядами (кольца силуэтов), м.")]
-        [SerializeField] float ridgeSpacing = 230f;
+        [Tooltip("Масштаб перепадов высоты между холмами, м.")]
+        [FormerlySerializedAs("ridgeSpacing")]
+        [SerializeField] float reliefScale = 230f;
         /// <summary>
         /// Высота рельефа там, где холмов нет (под трассой). Глубоко: под трассой есть низины — ущелья до −8 м
         /// и русла рек до −2.6 м; раньше подложка лежала на −0.7 и вылезала в них зелёным полом.
@@ -203,10 +205,12 @@ namespace JunkRace
             float ridged = Ridged((x - noiseZ) * s * 0.8f, (z + noiseX) * s * 0.8f, 3);
             float shape = Mathf.Lerp(rolling, ridged, far * 0.75f);
 
-            // Кольца гряд: силуэты ложатся слоями, а дымка красит каждый слой светлее.
-            float band = 0.72f + 0.28f * Mathf.Sin(d / Mathf.Max(30f, ridgeSpacing) * Mathf.PI * 2f + rolling * 4f);
+            // Перепады высоты зависят от координат, поэтому гряды не повторяют контур дороги.
+            float reliefFrequency = 1f / Mathf.Max(30f, reliefScale);
+            float relief = Fbm((x - noiseX) * reliefFrequency, (z - noiseZ) * reliefFrequency, 2);
+            float variation = Mathf.Lerp(0.44f, 1f, relief);
 
-            float h = amp * shape * band;
+            float h = amp * shape * variation;
             return Mathf.Lerp(belowGround, h, mask);
         }
 

@@ -633,6 +633,7 @@ namespace JunkRace
             // Рамка: выбранная — оранжевая, остальные — тёмные.
             var frame = Ui.Image("Рамка", card, null, on ? Ui.Accent : new Color(0.12f, 0.11f, 0.1f, 1f));
             Ui.Stretch(frame.rectTransform);
+            frame.raycastTarget = true;
             var pic = art != null ? (Graphic)Ui.Raw("Картинка", card, art) : Ui.Image("Картинка", card, null, new Color(0.3f, 0.27f, 0.24f));
             Ui.Stretch(pic.rectTransform, 5f, 5f, 5f, 5f);
             if (art != null) ((RawImage)pic).uvRect = CoverUv(art, 295f / 140f);

@@ -54,8 +54,7 @@ namespace JunkRace
         {
             cc = GetComponent<CharacterController>();
             carry = GetComponent<PlayerCarry>();
-            Controls = new GameControls();
-            driveInput = new PlayerPartInput(Controls);
+            InitializeControls();
             if (cameraTransform == null && Camera.main) cameraTransform = Camera.main.transform;
             if (cameraTransform) followCamera = cameraTransform.GetComponent<FollowCamera>();
             World.Local = this;
@@ -63,6 +62,22 @@ namespace JunkRace
             var nm = Unity.Netcode.NetworkManager.Singleton;
             ulong myId = nm != null && nm.IsListening ? nm.LocalClientId : 0UL;
             CharacterVisual.Attach(transform, CharacterVisual.PlayerColor(myId));
+        }
+
+        void OnEnable()
+        {
+            // При перекомпиляции в Play Mode Awake не повторяется, а карты ввода не сериализуются.
+            if (Controls != null) return;
+            InitializeControls();
+            World.Local = this;
+            if (driving != null) driving.SetDriver(driveInput);
+        }
+
+        void InitializeControls()
+        {
+            Controls = new GameControls();
+            Controls.SetDriving(InVehicle);
+            driveInput = new PlayerPartInput(Controls);
         }
 
         void OnDestroy()

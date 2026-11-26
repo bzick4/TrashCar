@@ -85,7 +85,11 @@ namespace JunkRace.EditorTools
         /// </summary>
         public static void FixMissingTexture(GameObject model, string folder)
         {
-            Texture2D tex = FindBaseColor(folder);
+            FixMissingTexture(model, FindBaseColor(folder));
+        }
+
+        static void FixMissingTexture(GameObject model, Texture2D tex)
+        {
             if (tex == null) return;
 
             foreach (var r in model.GetComponentsInChildren<Renderer>(true))
@@ -107,6 +111,26 @@ namespace JunkRace.EditorTools
                 }
                 r.sharedMaterials = mats;
             }
+        }
+
+        static void ApplyModelTexture(GameObject instance, GameObject model)
+        {
+            const string sharedTexturePrefix = "JunkRace.baseColor=";
+            var importer = AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(model));
+            string data = importer != null ? importer.userData : null;
+            if (data != null && data.StartsWith(sharedTexturePrefix, System.StringComparison.Ordinal))
+            {
+                var texturePath = AssetDatabase.GUIDToAssetPath(data.Substring(sharedTexturePrefix.Length));
+                var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+                if (texture != null)
+                {
+                    FixMissingTexture(instance, texture);
+                    return;
+                }
+            }
+
+            var folder = ExtractTextures(model);
+            if (folder != null) FixMissingTexture(instance, folder);
         }
 
         /// <summary>
@@ -150,7 +174,7 @@ namespace JunkRace.EditorTools
         /// <param name="flat">Плоская деталь (дверь, доска, руль): модель в файле может стоять на ребре и быть
         /// повёрнута под углом — выравниваем её и кладём плашмя (самая тонкая сторона — вверх).</param>
         public static GameObject Attach(GameObject model, Transform owner, Vector3 center, Vector3 size, bool keepProportions = false,
-                                        Quaternion? preRotation = null, bool flat = false)
+                                        Quaternion? preRotation = null, bool flat = false, bool preserveFacing = false)
         {
             Quaternion pre = preRotation ?? Quaternion.identity;
             // Контейнер: поворот и масштаб подгонки — на нём, а у самой модели остаётся
@@ -172,6 +196,7 @@ namespace JunkRace.EditorTools
             // рамка раздувается, и модель сжимается при подгонке. Ищем поворот с самой узкой рамкой.
             // Берём его, только если рамка заметно ужалась — у ровных моделей ничего не меняется.
             bool squared = false;
+            if (!preserveFacing)
             {
                 // Вертикаль владельца в осях узла выравнивания (контейнер уже повёрнут на pre).
                 Vector3 up = Quaternion.Inverse(pre) * Vector3.up;
@@ -200,7 +225,7 @@ namespace JunkRace.EditorTools
             System.Func<Bounds> measure = flat || squared ? () => VertexBounds(go, owner) : () => LocalBounds(go, owner);
             Bounds b = measure();
             // Длинная сторона модели — по X, а нужно по Z: разворачиваем на 90°.
-            if ((b.size.x > b.size.z) != (size.x > size.z))
+            if (!preserveFacing && (b.size.x > b.size.z) != (size.x > size.z))
             {
                 go.transform.localRotation = Quaternion.Euler(0f, 90f, 0f) * pre;
                 b = measure();
@@ -222,8 +247,7 @@ namespace JunkRace.EditorTools
                 for (int i = 0; i < mats.Length; i++) mats[i] = LookBuilder.ConvertMaterial(mats[i]);
                 r.sharedMaterials = mats;
             }
-            var texFolder = ExtractTextures(model);
-            if (texFolder != null) FixMissingTexture(go, texFolder);
+            ApplyModelTexture(go, model);
             return go;
         }
 
@@ -231,7 +255,7 @@ namespace JunkRace.EditorTools
         /// Колесо: модель внутрь вращающейся части. Самую тонкую ось модели кладём вдоль X (ось колеса),
         /// масштаб — по диаметру, пропорции сохраняются. Центр модели — в центре колеса.
         /// </summary>
-        public static GameObject AttachWheel(GameObject model, Transform pivot, float diameter)
+        public static GameObject AttachWheel(GameObject model, Transform pivot, float diameter, float visualYaw = 0f)
         {
             var go = new GameObject("Модель");
             go.transform.SetParent(pivot, false);
@@ -247,7 +271,7 @@ namespace JunkRace.EditorTools
             if (a.x > 0.985f) axis = new Vector3(Mathf.Sign(axis.x), 0f, 0f);
             else if (a.y > 0.985f) axis = new Vector3(0f, Mathf.Sign(axis.y), 0f);
             else if (a.z > 0.985f) axis = new Vector3(0f, 0f, Mathf.Sign(axis.z));
-            go.transform.localRotation = Quaternion.FromToRotation(axis, Vector3.right);
+            go.transform.localRotation = Quaternion.Euler(0f, visualYaw, 0f) * Quaternion.FromToRotation(axis, Vector3.right);
             Bounds b = VertexBounds(go, pivot);
             float k = Safe(diameter, Mathf.Max(b.size.y, b.size.z));
             go.transform.localScale = Vector3.one * k;
@@ -260,8 +284,7 @@ namespace JunkRace.EditorTools
                 for (int i = 0; i < mats.Length; i++) mats[i] = LookBuilder.ConvertMaterial(mats[i]);
                 r.sharedMaterials = mats;
             }
-            var texFolder = ExtractTextures(model);
-            if (texFolder != null) FixMissingTexture(go, texFolder);
+            ApplyModelTexture(go, model);
             return go;
         }
 

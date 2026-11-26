@@ -89,8 +89,8 @@ namespace JunkRace
         bool test;   // эта трасса — тестовая (TestRoute)
 
         /// <summary>
-        /// Тестовая трасса (только в редакторе, меню «JunkRace → Тестовая трасса»): всегда снег → горы
-        /// (ущелье с тоннелем и развилка «тоннель вниз / перевал вверх») → лес с рекой. В сборке — всегда выключена.
+        /// Тестовая трасса (только в редакторе, меню «JunkRace → Тестовая трасса»): брод → мост → тоннель.
+        /// В сборке — всегда выключена.
         /// </summary>
         public static bool TestRoute
         {
@@ -103,6 +103,7 @@ namespace JunkRace
 #endif
         }
         public const string TestRouteKey = "JunkRace.TestRoute";
+        internal static bool UseTestRoute => TestRoute && GameSession.Biome == RaceBiome.Random && !GameSession.IsTutorial;
         /// <summary>Участки трассы: прогресс начала (м от старта) и биом — по ним погода.</summary>
         public readonly List<float> SectionStarts = new List<float>();
         public readonly List<Biome> SectionBiomes = new List<Biome>();
@@ -366,10 +367,10 @@ namespace JunkRace
             // кроме предыдущего. Участков столько, чтобы набрать длину, выбранную перед гонкой; в каждом 1–3 куска.
             var order = BiomePool();
             Shuffle(order);
-            test = TestRoute;
+            test = UseTestRoute;
             bool tutorial = GameSession.IsTutorial;
             int fixedSections = 0;
-            if (tutorial) { fixedSections = 1; order = new List<Biome> { Biome.Forest }; test = false; }   // обучение: короткий лес
+            if (tutorial) { fixedSections = 1; order = new List<Biome> { Biome.Forest }; }   // обучение: короткий лес
             else if (test) { fixedSections = 3; order = new List<Biome> { Biome.Forest, Biome.Snow, Biome.Mountains }; }   // сперва вода: брод, мост, потом тоннель
             var names = new List<string>();
             jobNames = names;
@@ -414,10 +415,11 @@ namespace JunkRace
             foreach (var f in forkFills) BuildForkFill(f.left, f.right);
             forkFills.Clear();
             yield return null;
+            int firstDecoration = root.childCount;
             var deco = DecorateSteps();
             while (deco.MoveNext()) yield return null;
             if (circuit) { CircuitRidge(); yield return null; }
-            BuildGround();
+            BuildGround(firstDecoration);
             yield return null;
             if (circuit) FinishCircuit();
             root = null;
@@ -2065,12 +2067,31 @@ namespace JunkRace
             tris.Add(i); tris.Add(i + 2); tris.Add(i + 3);
         }
 
-        void BuildGround()
+        void BuildGround(int firstDecoration)
         {
             var b = new Bounds(transform.position, Vector3.zero);
-            foreach (var p in map.Paths) foreach (var s in p.Samples) b.Encapsulate(new Vector3(s.Pos.x, 0f, s.Pos.z));
+            var flatAreas = new List<Bounds>();
+            foreach (var path in map.Paths)
+            {
+                for (int i = 0; i < path.Samples.Count; i++)
+                {
+                    var sample = path.Samples[i];
+                    b.Encapsulate(new Vector3(sample.Pos.x, 0f, sample.Pos.z));
+                    if (i == 0) continue;
+                    var previous = path.Samples[i - 1];
+                    var corridor = new Bounds(previous.Pos, Vector3.zero);
+                    corridor.Encapsulate(sample.Pos);
+                    float margin = Mathf.Max(previous.HalfWidth, sample.HalfWidth) + 6f;
+                    corridor.Expand(new Vector3(2f * margin, 0f, 2f * margin));
+                    flatAreas.Add(corridor);
+                }
+            }
+            for (int i = firstDecoration; i < root.childCount; i++)
+                foreach (var renderer in root.GetChild(i).GetComponentsInChildren<Renderer>())
+                    flatAreas.Add(renderer.bounds);
+
             b.Expand(new Vector3(260f, 0f, 260f));
-            if (!circuit) { GroundIn(b, rivers, canyons); return; }
+            if (!circuit) { GroundIn(b, rivers, canyons, flatAreas); return; }
 
             // Кольцо: у каждой ветки своя половина карты (свои реки, ущелья и биомы по z), шов — под каменной грядой.
             float mid = transform.position.x;
@@ -2078,13 +2099,13 @@ namespace JunkRace
             var right = new Bounds(); right.SetMinMax(new Vector3(mid, b.min.y, b.min.z), b.max);
             var keep = zones;
             zones = zonesLeft;
-            GroundIn(left, rivers.FindAll(r => r.XMax <= mid + 0.1f), canyons.FindAll(c => !c.Right));
+            GroundIn(left, rivers.FindAll(r => r.XMax <= mid + 0.1f), canyons.FindAll(c => !c.Right), flatAreas);
             zones = zonesRight;
-            GroundIn(right, rivers.FindAll(r => r.XMin >= mid - 0.1f), canyons.FindAll(c => c.Right));
+            GroundIn(right, rivers.FindAll(r => r.XMin >= mid - 0.1f), canyons.FindAll(c => c.Right), flatAreas);
             zones = keep;
         }
 
-        void GroundIn(Bounds b, List<River> riverSet, List<Canyon> canyonSet)
+        void GroundIn(Bounds b, List<River> riverSet, List<Canyon> canyonSet, List<Bounds> flatAreas)
         {
             // Под свалкой земля своя — наша начинается от выезда.
             float zMin = transform.position.z - 0.5f;
@@ -2098,11 +2119,11 @@ namespace JunkRace
             float from = zMin;
             foreach (var sp in special)
             {
-                GroundStrip(b, from, sp.zMin);
+                GroundStrip(b, from, sp.zMin, flatAreas);
                 sp.build();
                 from = Mathf.Max(from, sp.zMax);
             }
-            GroundStrip(b, from, zMax);   // по бокам и позади свалки землю уже положил BuildSurroundings
+            GroundStrip(b, from, zMax, flatAreas);   // по бокам и позади свалки землю уже положил BuildSurroundings
         }
 
         static readonly Color SandColor = new Color(0.82f, 0.72f, 0.52f);
@@ -2556,7 +2577,7 @@ namespace JunkRace
         /// Полоса земли поперёк карты от z0 до z1: у каждого участка своя земля, на границе участков —
         /// полоса-переход (если есть картинка для этой пары биомов), иначе просто стык.
         /// </summary>
-        void GroundStrip(Bounds b, float z0, float z1)
+        void GroundStrip(Bounds b, float z0, float z1, List<Bounds> flatAreas)
         {
             if (z1 - z0 < 0.1f) return;
             // Биом на z: до первого участка — лес (выезд со свалки).
@@ -2592,8 +2613,86 @@ namespace JunkRace
             void Plate(float p0, float p1, Biome biome)
             {
                 if (p1 - p0 < 0.1f) return;
-                GroundPiece("Земля_" + biome, new Vector3(b.center.x, GroundY - 1f, (p0 + p1) / 2f), new Vector3(b.size.x, 2f, p1 - p0), biome);
+                BuildGroundRelief(b.min.x, b.max.x, p0, p1, biome, flatAreas);
             }
+        }
+
+        void BuildGroundRelief(float xMin, float xMax, float zMin, float zMax, Biome biome, List<Bounds> flatAreas)
+        {
+            const float cell = 6f, fade = 14f;
+            int cols = Mathf.CeilToInt((xMax - xMin) / cell) + 1;
+            int rows = Mathf.CeilToInt((zMax - zMin) / cell) + 1;
+            float dx = (xMax - xMin) / (cols - 1);
+            float dz = (zMax - zMin) / (rows - 1);
+            var vertices = new Vector3[cols * rows];
+            var uv = new Vector2[vertices.Length];
+            var masks = new float[vertices.Length];
+            var triangles = new List<int>((cols - 1) * (rows - 1) * 6);
+
+            for (int row = 0; row < rows; row++)
+            for (int col = 0; col < cols; col++)
+            {
+                int i = row * cols + col;
+                float x = xMin + col * dx, z = zMin + row * dz;
+                vertices[i] = new Vector3(x, GroundY, z);
+                uv[i] = new Vector2(x, z) / GroundTile;
+                // Плоские края стыкуются с переходами, реками, ущельями и соседними полосами.
+                float edge = Mathf.Min(Mathf.Min(col, cols - 1 - col) * dx, Mathf.Min(row, rows - 1 - row) * dz);
+                masks[i] = Mathf.Clamp01(edge / fade);
+                if (row == rows - 1 || col == cols - 1) continue;
+                triangles.Add(i); triangles.Add(i + cols); triangles.Add(i + cols + 1);
+                triangles.Add(i); triangles.Add(i + cols + 1); triangles.Add(i + 1);
+            }
+
+            // Запас в одну ячейку оставляет плоскими даже треугольники, пересекающие границы объекта.
+            foreach (var area in flatAreas)
+            {
+                Vector3 min = area.min, max = area.max;
+                float pad = cell + fade;
+                int c0 = Mathf.Max(0, Mathf.CeilToInt((min.x - pad - xMin) / dx));
+                int c1 = Mathf.Min(cols - 1, Mathf.FloorToInt((max.x + pad - xMin) / dx));
+                int r0 = Mathf.Max(0, Mathf.CeilToInt((min.z - pad - zMin) / dz));
+                int r1 = Mathf.Min(rows - 1, Mathf.FloorToInt((max.z + pad - zMin) / dz));
+                for (int row = r0; row <= r1; row++)
+                for (int col = c0; col <= c1; col++)
+                {
+                    int i = row * cols + col;
+                    var point = vertices[i];
+                    float x = Mathf.Max(min.x - point.x, point.x - max.x);
+                    float z = Mathf.Max(min.z - point.z, point.z - max.z);
+                    float mask = Mathf.Clamp01((Mathf.Max(x, z) - cell) / fade);
+                    masks[i] = Mathf.Min(masks[i], mask);
+                }
+            }
+
+            float seedX = Seed % 997, seedZ = Seed % 991;
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                if (masks[i] == 0f) continue;
+                float x = vertices[i].x, z = vertices[i].z;
+                float broad = Mathf.PerlinNoise(seedX + x / 58f, seedZ + z / 58f);
+                float detail = Mathf.PerlinNoise(seedZ + x / 22f, seedX + z / 22f);
+                float height = Mathf.Max(0f, broad * 0.8f + detail * 0.2f - 0.24f) * 22f;
+                vertices[i].y += height * Mathf.SmoothStep(0f, 1f, masks[i]);
+            }
+
+            var mesh = new Mesh { name = "Земля_рельеф_" + biome };
+            if (vertices.Length > 65000) mesh.indexFormat = IndexFormat.UInt32;
+            mesh.vertices = vertices;
+            mesh.uv = uv;
+            mesh.SetTriangles(triangles, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            var go = new GameObject(mesh.name);
+            go.transform.SetParent(root, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var renderer = go.AddComponent<MeshRenderer>();
+            var material = GroundMaterial(biome);
+            renderer.sharedMaterial = material != null ? Tiled(material, Vector2.one) : Mat(GroundColor(biome));
+            renderer.shadowCastingMode = ShadowCastingMode.Off;
+            go.AddComponent<MeshCollider>().sharedMesh = mesh;
+            go.isStatic = true;
         }
 
         int FindGroundTransition(Biome from, Biome to, out bool flip)
@@ -2660,13 +2759,14 @@ namespace JunkRace
                         }
                     }
                 // Столбики по краям — чтобы в открытом мире было видно, где дорога.
+                const float postInset = 0.5f;
                 for (float d = 4f; d < path.Length; d += 12f)
                 {
                     var s = path.At(d);
                     if (!s.Road || s.Bridge || UnderWater(s.Pos)) continue;   // у брода столбики под водой ни к чему, у моста — перила
                     for (int k = -1; k <= 1; k += 2)
                     {
-                        Vector3 p = s.Pos + s.Right * k * (s.HalfWidth + 0.4f);
+                        Vector3 p = s.Pos + s.Right * k * Mathf.Max(0f, s.HalfWidth - postInset);
                         if (Any(postModels))
                         {
                             Model(postModels, p, Quaternion.LookRotation(s.Forward), Vector3.one * 0.9f, Decor.Small, true);

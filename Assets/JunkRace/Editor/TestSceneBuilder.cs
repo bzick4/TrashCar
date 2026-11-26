@@ -654,7 +654,8 @@ namespace JunkRace.EditorTools
             // Колёса (12, 15, 21, 26)
             Color rubber = new Color(0.15f, 0.15f, 0.15f);
             Scaled(yard, new[] { 2, 3, 4, 5 }, () =>
-                MakeWheel(yard, "Колесо квадроцикла", "Держит дорогу. Почти.", 11f, 0.45f, 900f, 750f, new Color(0.35f, 0.25f, 0.15f), model: "quadro_wheel"));
+                MakeWheel(yard, "Колесо квадроцикла", "Держит дорогу. Почти.", 11f, 0.45f, 900f, 750f, new Color(0.35f, 0.25f, 0.15f),
+                          model: "wheel-tractor-dark-back", visualYaw: 180f));
             Scaled(yard, new[] { 2, 2, 3, 4 }, () =>
                 MakeWheel(yard, "Колесо", "Обычное, от чего-то маленького. Скучное, зато катится и держит.", 7f, 0.38f, 650f, 600f, rubber, model: "wheel"));
             Scaled(yard, new[] { 2, 2, 3, 4 }, () =>
@@ -676,9 +677,9 @@ namespace JunkRace.EditorTools
             Scaled(yard, new[] { 1, 1, 2, 2 }, () =>
                 MakeEngine(yard, "Мотор от стиралки", "Тяжёлый и тихий. На отжиме неплох.", 32f, 3000f, 800f, Color.white, new Vector3(0.8f, 0.8f, 0.8f), "washing machine"));
             Scaled(yard, new[] { 0, 1, 1, 2 }, () =>
-                MakeEngine(yard, "Электромотор", "Тяговый, от погрузчика. Тяжёлый, но тянет ровно и мощно.", 26f, 5500f, 900f, new Color(0.15f, 0.4f, 0.4f), new Vector3(0.55f, 0.45f, 0.5f), "motor"));
+                MakeEngine(yard, "Электромотор", "Тяговый, от погрузчика. Тяжёлый, но тянет ровно и мощно.", 26f, 5500f, 900f, new Color(0.15f, 0.4f, 0.4f), new Vector3(0.55f, 0.45f, 0.5f), "ElectricMotorAndCraddle"));
             Scaled(yard, new[] { 1, 2, 2, 3 }, () =>
-                MakeEngine(yard, "Бензопила", "Злая, лёгкая и отваливается при каждом чихе.", 7f, 7500f, 220f, new Color(1f, 0.55f, 0f), new Vector3(0.3f, 0.35f, 0.9f), "chainsaw"));
+                MakeEngine(yard, "Мотоциклетный двигатель", "Лёгкий мотор с кикстартером.", 7f, 7500f, 220f, Color.gray, new Vector3(0.41f, 0.46f, 0.51f), "Motorcycle_engine"));
             Scaled(yard, new[] { 1, 1, 2, 2 }, () => MakeFan(yard));
             Scaled(yard, new[] { 1, 1, 1, 2 }, () => MakeVacuum(yard));
 
@@ -856,8 +857,10 @@ namespace JunkRace.EditorTools
                 }
             }
             // Сидящий игрок: центр капсулы чуть выше сиденья (ноги «в кресле»).
-            string seatModel = style == SeatStyle.Office ? "office chair" : style == SeatStyle.Car ? "car chair" : "toilet";
-            DressPart(p, SeatFolder, seatModel, col.center, col.size);
+            string seatModel = style == SeatStyle.Office ? "chairDesk_Palette" : style == SeatStyle.Car ? "car chair" : "toilet";
+            bool office = style == SeatStyle.Office;
+            DressPart(p, SeatFolder, seatModel, col.center, col.size,
+                      preRotation: office ? Quaternion.Euler(0f, 180f, 0f) : (Quaternion?)null, preserveFacing: office);
             var sit = new GameObject("SitPoint").transform;
             sit.SetParent(t, false);
             sit.localPosition = new Vector3(0f, seatTop + 0.4f, 0f);
@@ -957,7 +960,32 @@ namespace JunkRace.EditorTools
             // keepProportions уменьшает по самой тесной оси — ставим низом на землю.
             SitOnGround(view.transform, t);
             view.transform.position += Vector3.up * PileSink;   // слегка утопить в землю: у модели снизу пустоты
+            AddPileLod(view, model.name);
             return true;
+        }
+
+        static void AddPileLod(GameObject view, string modelName)
+        {
+            var lodMesh = AssetDatabase.LoadAssetAtPath<Mesh>($"{TrashFolder}/{modelName}_LOD1.asset");
+            if (lodMesh == null || view.GetComponent<LODGroup>() != null) return;
+            var source = view.GetComponentInChildren<MeshRenderer>(true);
+            if (source == null) return;
+
+            var lodView = new GameObject(lodMesh.name) { layer = source.gameObject.layer };
+            lodView.transform.SetParent(source.transform, false);
+            lodView.AddComponent<MeshFilter>().sharedMesh = lodMesh;
+            var low = lodView.AddComponent<MeshRenderer>();
+            low.sharedMaterials = source.sharedMaterials;
+            low.shadowCastingMode = source.shadowCastingMode;
+            low.receiveShadows = source.receiveShadows;
+
+            var group = view.AddComponent<LODGroup>();
+            group.SetLODs(new[]
+            {
+                new LOD(0.08f, new Renderer[] { source }),
+                new LOD(0f, new Renderer[] { low }),
+            });
+            group.RecalculateBounds();
         }
 
         /// <summary>Заменить вид всех куч в открытой сцене на модель — без полной пересборки.</summary>
@@ -1137,12 +1165,13 @@ namespace JunkRace.EditorTools
         }
 
         /// <summary>Модель из Assets/Prefab/Car/{folder}/{file} заменяет вид детали; примитивы остаются коллайдерами.</summary>
-        static bool DressPart(Part part, string folder, string file, Vector3 center, Vector3 size, Quaternion? preRotation = null, bool flat = false)
+        static bool DressPart(Part part, string folder, string file, Vector3 center, Vector3 size, Quaternion? preRotation = null,
+                              bool flat = false, bool preserveFacing = false)
         {
             var model = ModelFitter.Find(folder, file);
             if (model == null) return false;
             ModelFitter.StripOwnRenderers(part);
-            ModelFitter.Attach(model, part.transform, center, size, false, preRotation, flat);
+            ModelFitter.Attach(model, part.transform, center, size, false, preRotation, flat, preserveFacing);
             return true;
         }
 
@@ -1393,7 +1422,7 @@ namespace JunkRace.EditorTools
         static WheelPart MakeWheel(Transform parent, string name, string description, float mass, float radius,
                                    float traction, float grip, Color color, WheelStyle style = WheelStyle.Tire,
                                    float thickness = 0.12f, float breakImpulse = 600f, float rolling = 3f,
-                                   float buoyancy = 0f, float paddle = 0.5f, string model = null)
+                                   float buoyancy = 0f, float paddle = 0.5f, string model = null, float visualYaw = 0f)
         {
             var p = MakePart<WheelPart>(name, PartCategory.Drive, parent, RandomYardPos(), mass, breakImpulse, buoyancy, description);
             // Коллайдер в форме шины (плоский цилиндр): свободное колесо катится как колесо, а не как мяч.
@@ -1407,7 +1436,7 @@ namespace JunkRace.EditorTools
             var wheelModel = string.IsNullOrEmpty(model) ? null : ModelFitter.Find(WheelFolder, model);
             if (wheelModel != null)
             {
-                var modelGo = ModelFitter.AttachWheel(wheelModel, pivot, radius * 2f);
+                var modelGo = ModelFitter.AttachWheel(wheelModel, pivot, radius * 2f, visualYaw);
                 // Ширина шины — по модели: под неё и коллайдер, и прижим к борту (WheelPart.InsetTowardHull).
                 float half = ModelFitter.VertexBounds(modelGo, p.transform).extents.x;
                 var col = p.transform.Find("Коллайдер_шины");
@@ -1529,7 +1558,7 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Cube, "Лопасть2", spinner, Vector3.zero, new Vector3(0.12f, 0.8f, 0.03f), Color.white, false);
             Set(p, "thrust", 1200f);
             Set(p, "spinner", spinner);
-            DressPart(p, SpecialFolder, "fan", Vector3.zero, new Vector3(0.9f, 0.9f, 0.3f));
+            DressPart(p, SpecialFolder, "FanReplacement_Palette", Vector3.zero, new Vector3(0.9f, 0.9f, 0.3f));
         }
 
         static void MakeVacuum(Transform parent)
@@ -1627,7 +1656,7 @@ namespace JunkRace.EditorTools
                     mass = 22f; breakImpulse = 2500f; protection = 0.25f; drag = 0.08f; size = new Vector3(1.1f, 0.7f, 0.08f); model = "car_door"; break;
                 default:
                     name = "Оконная рама"; desc = "Деревянная, без стекла. Лёгкая, ветер свистит насквозь — почти не тормозит.";
-                    mass = 9f; breakImpulse = 1200f; protection = 0.12f; drag = 0.02f; size = new Vector3(1.0f, 0.8f, 0.06f); model = "window_frame"; break;
+                    mass = 9f; breakImpulse = 1200f; protection = 0.12f; drag = 0.02f; size = new Vector3(1.0f, 0.8f, 0.06f); model = "WindowReplacement_Palette"; break;
             }
             var p = MakePart<ArmorPart>(name, PartCategory.Armor, parent, RandomYardPos(), mass, breakImpulse, 0f, desc, drag);
             var t = p.transform;
