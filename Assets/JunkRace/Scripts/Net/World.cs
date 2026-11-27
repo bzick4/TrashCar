@@ -203,6 +203,7 @@ namespace JunkRace
             if (a == null || part == null || a.Held != null || a.Driving != null || a.Seat != null || !part.CanBeCarried) return;
             if (RaceTimer.InteractionLocked) return;   // не все загрузились — фору не даём
             if (!MayUse(id, part.Vehicle)) return;   // чужую машину не разбирают и не уносят
+            if (part.Vehicle is Vehicle recovering && recovering.RootPart == part && recovering.TrainRecoveryPending) return;
             // Прикрученную деталь сначала снимаем с машины. Vehicle поднимет PartDetached, JunkNet разошлёт
             // снятие раньше, чем «взял» (один надёжный упорядоченный канал), так что у клиентов порядок тот же.
             if (part.MountedOn != null && part.Vehicle != null) part.Vehicle.Detach(part, Vector3.zero);
@@ -252,7 +253,7 @@ namespace JunkRace
             var a = Get(id);
             if (a == null || vehicle == null || a.Held != null || a.Driving != null || a.Seat != null || vehicle.HasDriver
                 || vehicle.RootPart.IsCarried) return;   // в машину, которую несут, не садятся
-            if (!MayUse(id, vehicle)) return;               // за руль чужой машины нельзя
+            if (!MayUse(id, vehicle) || vehicle.TrainRecoveryPending) return;
             if (RaceTimer.InteractionLocked) return;
             ServerClaim(id, vehicle);
             ApplyEnter(a, vehicle);
@@ -338,12 +339,29 @@ namespace JunkRace
             return own;
         }
 
+        internal static IAvatar DriverOf(Vehicle vehicle)
+        {
+            foreach (var avatar in All())
+                if (avatar.Driving == vehicle) return avatar;
+            return null;
+        }
+
+        internal static void ServerRestoreDriver(ulong id, Vehicle vehicle)
+        {
+            var avatar = Get(id);
+            if (avatar == null || avatar.Driving == vehicle || vehicle.HasDriver) return;
+
+            if (avatar.Driving != null || avatar.Seat != null) ServerExit(id);
+            if (avatar.Held != null) ServerRelease(id, null, Vector3.zero);
+            ApplyEnter(avatar, vehicle);
+            Net?.BroadcastDriver(vehicle, avatar);
+        }
+
         /// <summary>Хост: водителя выбросило ударом — выходит из машины и летит по инерции.</summary>
         public static void ServerEjectDriver(Vehicle vehicle, Vector3 fling)
         {
             if (vehicle == null) return;
-            IAvatar driver = null;
-            foreach (var a in All()) if (a.Driving == vehicle) { driver = a; break; }
+            var driver = DriverOf(vehicle);
             if (driver == null) return;
             ApplyEject(driver, fling);
             if (Net != null) Net.BroadcastEject(vehicle, driver, fling);
@@ -403,8 +421,7 @@ namespace JunkRace
 
         public static void ApplyExitVehicle(Vehicle vehicle)
         {
-            IAvatar driver = null;
-            foreach (var a in All()) if (a.Driving == vehicle) { driver = a; break; }
+            var driver = DriverOf(vehicle);
             if (driver != null) ApplyExit(driver);
             else vehicle.SetDriver(null);
         }

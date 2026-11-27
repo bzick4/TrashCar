@@ -48,6 +48,11 @@ namespace JunkRace
         float ejectCooldown;
         bool pendingEject;
         Vector3 ejectFling;
+        const float TrainRecoveryDelay = 1f, TrainRecoveryBack = 24f;
+        double trainRecoveryAt;
+        ulong trainRecoveryDriver;
+        Vector3 trainImpactPosition;
+        internal bool TrainRecoveryPending => trainRecoveryAt > 0d;
         float airTime;
         float offRouteTime, routeCheckTimer;
         bool onRoute = true;
@@ -444,6 +449,36 @@ namespace JunkRace
             PlaceForReset(target, fwd);
         }
 
+        void QueueTrainRecovery()
+        {
+            if (!HasDriver || TrainRecoveryPending || RaceTimer.HoldVehicles) return;
+            var driver = World.DriverOf(this);
+            if (driver == null) return;
+
+            trainRecoveryDriver = driver.ClientId;
+            trainImpactPosition = Body.position;
+            trainRecoveryAt = Time.fixedTimeAsDouble + TrainRecoveryDelay;
+        }
+
+        void RecoverFromTrain()
+        {
+            trainRecoveryAt = 0d;
+            var route = RouteMap.Current;
+            if (route != null && route.ResetPose(trainImpactPosition, TrainRecoveryBack, ResetMargin,
+                                                  out var position, out var forward))
+            {
+                PlaceForReset(position + Vector3.up * resetHeight, forward);
+                onRoute = onRoad = true;
+                offRouteTime = offRoadTime = 0f;
+                lastSafePosition = position;
+                hasSafePosition = true;
+            }
+            else Flip();
+
+            World.Net?.BroadcastTrainRecovery(this);
+            World.ServerRestoreDriver(trainRecoveryDriver, this);
+        }
+
         /// <summary>Поставить машину в точку (стартовая решётка): на землю под ней, носом по forward.</summary>
         public void PlaceAt(Vector3 point, Vector3 forward)
         {
@@ -514,45 +549,14 @@ namespace JunkRace
                 if (HasDriver) World.ServerEjectDriver(this, ejectFling);
             }
 
+            if (TrainRecoveryPending && Time.fixedTimeAsDouble >= trainRecoveryAt)
+                RecoverFromTrain();
+
             // Стоит без водителя, и физика его уже усыпила (пустой корпус на свалке) — ни сил, ни проверок
             // не нужно. От удара или прикрученной детали тело проснётся само, и шаг пойдёт как обычно.
             if (!HasDriver && Body.IsSleeping()) return;
 
-            // Упала за край — сама на трассу. Пока стоит колёсами на трассе — запоминаем место.
-            var route = RouteMap.Current;
-            if (Body.position.y < fallResetY) Flip();
-            else if (route != null)
-            {
-                // Открытый мир: проверяем раз в 0.2 с (поиск по маршруту не бесплатный).
-                routeCheckTimer -= dt;
-                if (routeCheckTimer <= 0f)
-                {
-                    routeCheckTimer = 0.2f;
-                    onRoute = !route.IsOff(Body.position);
-                    onRoad = route.OnRoad(Body.position, ShortcutTolerance);
-                }
-                // Место, откуда вернуть: последнее, где стоял колёсами на самой дороге.
-                if (onRoad && groundedWheels > 0) { lastSafePosition = Body.position; hasSafePosition = true; }
-                if (onRoad) offRoadTime = 0f;
-                else if (HasDriver)
-                {
-                    // Срезать не выйдет: больше ShortcutDelay секунд не по дороге — обратно туда, где съехал.
-                    offRoadTime += dt;
-                    if (offRoadTime > ShortcutDelay) { offRoadTime = 0f; Flip(); }
-                }
-                if (onRoute) offRouteTime = 0f;
-                else if (HasDriver)
-                {
-                    // Уехал далеко или упал с горной дороги — обратно на трассу.
-                    offRouteTime += dt;
-                    if (offRouteTime > offRouteDelay) Flip();
-                }
-            }
-            else if (groundedWheels > 0 && (TrackBounds.Instance == null || TrackBounds.Instance.Contains(Body.position, 1f)))
-            {
-                lastSafePosition = Body.position;
-                hasSafePosition = true;
-            }
+            if (!TrainRecoveryPending) UpdateRouteRecovery(dt);
 
             // Колёса отчитались в прошлом шаге — по ним делим мощность мотора.
             groundedWheels = groundedThisStep;
@@ -596,6 +600,45 @@ namespace JunkRace
                 Body.AddTorque(Vector3.up * Input.Steer * waterTurn * SteerQuality, ForceMode.Acceleration);
 
             ApplyWater();
+        }
+
+        void UpdateRouteRecovery(float dt)
+        {
+            // Упала за край — сама на трассу. Пока стоит колёсами на трассе — запоминаем место.
+            var route = RouteMap.Current;
+            if (Body.position.y < fallResetY) Flip();
+            else if (route != null)
+            {
+                // Открытый мир: проверяем раз в 0.2 с (поиск по маршруту не бесплатный).
+                routeCheckTimer -= dt;
+                if (routeCheckTimer <= 0f)
+                {
+                    routeCheckTimer = 0.2f;
+                    onRoute = !route.IsOff(Body.position);
+                    onRoad = route.OnRoad(Body.position, ShortcutTolerance);
+                }
+                // Место, откуда вернуть: последнее, где стоял колёсами на самой дороге.
+                if (onRoad && groundedWheels > 0) { lastSafePosition = Body.position; hasSafePosition = true; }
+                if (onRoad) offRoadTime = 0f;
+                else if (HasDriver)
+                {
+                    // Срезать не выйдет: больше ShortcutDelay секунд не по дороге — обратно туда, где съехал.
+                    offRoadTime += dt;
+                    if (offRoadTime > ShortcutDelay) { offRoadTime = 0f; Flip(); }
+                }
+                if (onRoute) offRouteTime = 0f;
+                else if (HasDriver)
+                {
+                    // Уехал далеко или упал с горной дороги — обратно на трассу.
+                    offRouteTime += dt;
+                    if (offRouteTime > offRouteDelay) Flip();
+                }
+            }
+            else if (groundedWheels > 0 && (TrackBounds.Instance == null || TrackBounds.Instance.Contains(Body.position, 1f)))
+            {
+                lastSafePosition = Body.position;
+                hasSafePosition = true;
+            }
         }
 
         void Update()
@@ -688,6 +731,8 @@ namespace JunkRace
             if (!Authority.IsAuthority) return;
             float impulse = collision.impulse.magnitude;
             if (impulse <= 0f) return;
+            if (collision.rigidbody != null && collision.rigidbody.GetComponentInParent<RouteRailway>() != null)
+                QueueTrainRecovery();
 
             for (int i = 0; i < collision.contactCount; i++)
             {

@@ -352,6 +352,8 @@ namespace JunkRace
             if (vehicle != null)
             {
                 driving = vehicle;
+                knockback = Vector3.zero;
+                verticalVelocity = 0f;
                 cc.enabled = false;   // выключенный CharacterController не становится частью коллайдера машины
                 transform.SetParent(vehicle.Seat, false);
                 transform.localPosition = Vector3.zero;

@@ -467,7 +467,7 @@ namespace JunkRace
                 var railwayBuild = railway.Build(map, GroundY);
                 while (railwayBuild.MoveNext()) yield return null;
             }
-            RouteAirTraffic.Build(root, map, seed);
+            RouteAirTraffic.Build(root, map, toReverse, seed);
             root = null;
         }
 

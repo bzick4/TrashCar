@@ -12,46 +12,54 @@ namespace JunkRace
         const int TrailSamples = 24;
         const float LowSpeed = 56f;
         const float LowPeriod = 27f;
-        const float LowHalfLength = 560f;
-        const float FlybyHeight = 9f;
+        const float LowHalfLength = 230f;
+        const float FlybyHeight = 6.6f;
         const float FlybyApproach = 155f;
         const float HighSpeed = 105f;
 
         sealed class Zone
         {
-            public Vector3 center, forward, lowCenter;
-            public Transform plane, airship, airliner;
-            public LineRenderer smoke, contrail;
+            public Vector3 center;
+            public Transform airliner;
+            public LineRenderer contrail;
             public float phase;
-            public int index;
         }
 
         readonly List<Zone> zones = new List<Zone>();
         readonly List<Material> materials = new List<Material>();
         readonly Vector3[] trailPoints = new Vector3[TrailSamples];
+        RouteMap routeMap;
+        HashSet<RoutePath> reversedPaths;
+        Transform redPlane, airship;
+        LineRenderer redSmoke;
+        Vector3 airshipCenter, flybyCenter, flybyHeading;
+        bool flybyHeadOn;
+        float flybyStart = -LowPeriod, nextFlybyCheck;
+        bool flybyActive;
+        int flybyCount;
         double startTime;
         bool networked;
         int seed;
 
-        internal static void Build(Transform parent, RouteMap map, int seed)
+        internal static void Build(Transform parent, RouteMap map, List<RoutePath> reversed, int seed)
         {
             var root = new GameObject("Воздушное движение");
             root.transform.SetParent(parent, false);
             var traffic = root.AddComponent<RouteAirTraffic>();
             traffic.networked = GameSession.Mode != GameMode.Solo;
             traffic.seed = seed;
-            traffic.BuildZones(map);
+            traffic.BuildZones(map, reversed);
         }
 
-        void BuildZones(RouteMap map)
+        void BuildZones(RouteMap map, List<RoutePath> reversed)
         {
             var plane = Load("PUSHILIN_Plane");
-            var airship = Load("Airship");
+            var ship = Load("Airship");
             var airliner = Load("Airplane");
             var trailShader = Resources.Load<Shader>("AirTraffic/AirTrail");
             var modelShader = Shader.Find("JunkRace/Toon");
-            if (plane.model == null || airship.model == null || airliner.model == null ||
-                plane.texture == null || airship.texture == null || airliner.texture == null ||
+            if (plane.model == null || ship.model == null || airliner.model == null ||
+                plane.texture == null || ship.texture == null || airliner.texture == null ||
                 trailShader == null || modelShader == null)
             {
                 Debug.LogWarning("JunkRace: не удалось загрузить модели или шейдеры воздушного движения.");
@@ -61,10 +69,15 @@ namespace JunkRace
             var smokeMaterial = new Material(trailShader);
             materials.Add(smokeMaterial);
             var planeMaterial = Paint(modelShader, plane.texture);
-            var shipMaterial = Paint(modelShader, airship.texture);
+            var shipMaterial = Paint(modelShader, ship.texture);
             var linerMaterial = Paint(modelShader, airliner.texture);
 
             float far = map.Start.Pos.z;
+            routeMap = map;
+            reversedPaths = new HashSet<RoutePath>(reversed);
+            redPlane = Aircraft(plane.model, planeMaterial, "Низкий самолёт", 27f, reverse: true);
+            redSmoke = Trail("Дымка самолёта", smokeMaterial, new Color(0.78f, 0.8f, 0.85f), 0.38f, 0.8f, 2.6f);
+            airship = Aircraft(ship.model, shipMaterial, "Дирижабль", 80f);
             var route = new List<RouteSample>();
             foreach (var path in map.Paths)
             {
@@ -93,41 +106,15 @@ namespace JunkRace
                     anchor = sample;
                     best = distance;
                 }
-                var flyby = anchor;
-                if (i == 0)
-                {
-                    var firstPass = map.Start.Pos + Vector3.forward * 60f;
-                    best = float.PositiveInfinity;
-                    foreach (var sample in route)
-                    {
-                        float distance = (sample.Pos - firstPass).sqrMagnitude;
-                        if (distance >= best) continue;
-                        best = distance;
-                        flyby = sample;
-                    }
-                }
-                float flybyFloor = Mathf.Max(map.Start.Pos.y, flyby.Pos.y);
-                foreach (var sample in route)
-                {
-                    var offset = sample.Pos - flyby.Pos;
-                    if (offset.x * offset.x + offset.z * offset.z < 18f * 18f)
-                        flybyFloor = Mathf.Max(flybyFloor, sample.Pos.y);
-                }
-                var forward = Vector3.ProjectOnPlane(anchor.Forward, Vector3.up).normalized;
                 zones.Add(new Zone
                 {
-                    index = i,
                     phase = (seed % 71) * 0.27f + i * 19.7f,
                     center = new Vector3(anchor.Pos.x, top, anchor.Pos.z),
-                    lowCenter = new Vector3(flyby.Pos.x, flybyFloor + FlybyHeight, flyby.Pos.z),
-                    forward = forward.sqrMagnitude > 0.5f ? forward : Vector3.forward,
-                    plane = Aircraft(plane.model, planeMaterial, "Низкий самолёт", 27f),
-                    airship = Aircraft(airship.model, shipMaterial, "Дирижабль", 80f),
                     airliner = Aircraft(airliner.model, linerMaterial, "Высокий лайнер", 34f),
-                    smoke = Trail("Дымка самолёта", smokeMaterial, new Color(0.78f, 0.8f, 0.85f), 0.38f, 0.8f, 2.6f),
                     contrail = Trail("След лайнера", smokeMaterial, new Color(0.98f, 0.98f, 1f), 0.73f, 0.9f, 5.5f)
                 });
             }
+            airshipCenter = zones[zones.Count / 2].center;
         }
 
         static (GameObject model, Texture2D texture) Load(string name) =>
@@ -142,11 +129,12 @@ namespace JunkRace
             return material;
         }
 
-        Transform Aircraft(GameObject model, Material material, string label, float size)
+        Transform Aircraft(GameObject model, Material material, string label, float size, bool reverse = false)
         {
             var pivot = new GameObject(label).transform;
             pivot.SetParent(transform, false);
             var art = Instantiate(model, pivot).transform;
+            if (reverse) art.localRotation = Quaternion.Euler(0f, 180f, 0f);
             var renderers = art.GetComponentsInChildren<MeshRenderer>();
             var bounds = renderers[0].bounds;
             foreach (var renderer in renderers)
@@ -195,31 +183,85 @@ namespace JunkRace
 
         void Animate(double clock, float raceElapsed)
         {
+            if (airship == null) return;
+            float angle = (float)(clock % 150.0) * (2f * Mathf.PI / 150f);
+            var drift = new Vector3(170f * Mathf.Cos(angle), 4f * Mathf.Sin(angle * 2f), 105f * Mathf.Sin(angle));
+            var heading = new Vector3(-170f * Mathf.Sin(angle), 0f, 105f * Mathf.Cos(angle));
+            if (!airship.gameObject.activeSelf) airship.gameObject.SetActive(true);
+            airship.SetPositionAndRotation(airshipCenter + new Vector3(250f, 115f, 80f) + drift, Quaternion.LookRotation(heading));
+
             foreach (var zone in zones)
             {
                 double time = clock + zone.phase;
-                float angle = (float)(time % 150.0) * (2f * Mathf.PI / 150f);
-                var drift = new Vector3(170f * Mathf.Cos(angle), 4f * Mathf.Sin(angle * 2f), 105f * Mathf.Sin(angle));
-                var heading = new Vector3(-170f * Mathf.Sin(angle), 0f, 105f * Mathf.Cos(angle));
-                if (!zone.airship.gameObject.activeSelf) zone.airship.gameObject.SetActive(true);
-                zone.airship.SetPositionAndRotation(zone.center + new Vector3(250f, 131f, 80f) + drift, Quaternion.LookRotation(heading));
-
-                // Первый пролёт проходит поперёк выезда примерно через пять секунд после старта.
-                double lowTime = raceElapsed >= 0f ? raceElapsed + 5d + zone.index * 8d : time;
-                int pass = Mathf.FloorToInt((float)(lowTime / LowPeriod));
-                var trackForward = zone.index == 0 ? Vector3.forward : zone.forward;
-                var low = ((pass + zone.index) & 1) == 0 ? Vector3.Cross(Vector3.up, trackForward) : trackForward;
-                if ((pass & 2) != 0) low = -low;
-                Fly(zone.plane, zone.smoke, zone.lowCenter, low,
-                    (float)(lowTime - LowPeriod * pass), LowSpeed, LowHalfLength, 13f,
-                    ((pass + zone.index) % 3) != 1 ? 3.8f : 0f,
-                    Mathf.Max(0f, zone.center.y + 36f - zone.lowCenter.y));
-
                 var high = new Vector3(0.87f, 0f, 0.49f).normalized;
-                var highCenter = zone.center + new Vector3(-125f, 185f, 175f);
+                var highCenter = zone.center + new Vector3(-90f, 78f, 140f);
                 Fly(zone.airliner, zone.contrail, highCenter, high, (float)((time + 11d) % 65d),
                     HighSpeed, 1450f, 14f, 15f);
             }
+
+            UpdateFlyby(raceElapsed);
+        }
+
+        void UpdateFlyby(float raceElapsed)
+        {
+            // Пролёт — локальный эффект: в коопе игроки могут быть на разных участках.
+            var driver = World.Local?.Driving;
+            var observer = driver != null ? driver.transform : World.Local?.HoldPoint;
+            if (observer == null || raceElapsed < 0f)
+            {
+                flybyActive = false;
+                nextFlybyCheck = 0f;
+            }
+            else if (raceElapsed >= nextFlybyCheck)
+            {
+                nextFlybyCheck = raceElapsed + 0.2f;
+                bool onRoad = routeMap.Nearest(observer.position, true, out var hit) && hit.Path.BuildMesh;
+                float progress = onRoad ? FlybyProgress(routeMap, hit) : -1f;
+                if (progress < 0.2f || progress > 0.8f) flybyActive = false;
+                else if (raceElapsed - flybyStart >= LowPeriod)
+                {
+                    flybyHeadOn = ((seed + flybyCount++) & 1) == 0;
+                    flybyStart = raceElapsed;
+                    flybyActive = true;
+                    AimFlyby(hit, driver, LowHalfLength / LowSpeed, 1f);
+                }
+                else if (flybyActive && raceElapsed - flybyStart < 2.5f)
+                {
+                    // Пока самолёт далеко, поправляем точку встречи по движению игрока.
+                    float remaining = LowHalfLength / LowSpeed - (raceElapsed - flybyStart);
+                    AimFlyby(hit, driver, remaining, 0.35f);
+                }
+            }
+
+            if (flybyActive)
+                Fly(redPlane, redSmoke, flybyCenter, flybyHeading, raceElapsed - flybyStart,
+                    LowSpeed, LowHalfLength, 13f, flybyCount % 3 != 0 ? 3.8f : 0f, 28f);
+            else
+            {
+                redPlane.gameObject.SetActive(false);
+                redSmoke.enabled = false;
+            }
+        }
+
+        void AimFlyby(RouteMap.Hit hit, Vehicle driver, float secondsToPass, float blend)
+        {
+            int sign = reversedPaths.Contains(hit.Path) ? -1 : 1;
+            float speed = driver != null ? Mathf.Clamp(driver.ForwardSpeed, 0f, 40f) : 0f;
+            var target = hit.Path.At(hit.Along + speed * secondsToPass * sign);
+            if (!target.Road) target = hit.Sample;
+            var forward = Vector3.ProjectOnPlane(target.Forward * sign, Vector3.up);
+            if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
+            var heading = forward.normalized * (flybyHeadOn ? -1f : 1f);
+            flybyCenter = Vector3.Lerp(flybyCenter, target.Pos + Vector3.up * FlybyHeight, blend);
+            flybyHeading = blend >= 1f ? heading : Vector3.Slerp(flybyHeading, heading, blend);
+        }
+
+        static float FlybyProgress(RouteMap map, RouteMap.Hit hit)
+        {
+            float progress = hit.Path.StartProgress + hit.Along * hit.Path.ProgressScale;
+            if (!map.Circuit) return map.FinishProgress > 0f ? progress / map.FinishProgress : -1f;
+            if (progress < map.LapStart || map.LapLength <= 0f) return -1f;
+            return Mathf.Repeat(progress - map.LapLine, map.LapLength) / map.LapLength;
         }
 
         void Fly(Transform aircraft, LineRenderer trail, Vector3 center, Vector3 heading,
@@ -257,7 +299,7 @@ namespace JunkRace
         static Vector3 FlightPoint(Vector3 center, Vector3 heading, float along, float approachLift)
         {
             // На дальней дистанции самолёт выше, перед дорогой снижается и снова набирает высоту.
-            float lift = approachLift * Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(20f, FlybyApproach, Mathf.Abs(along)));
+            float lift = approachLift * Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(34f, FlybyApproach, Mathf.Abs(along)));
             return center + heading * along + Vector3.up * lift;
         }
 

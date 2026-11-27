@@ -1199,7 +1199,7 @@ namespace JunkRace.EditorTools
             for (int i = -1; i <= 1; i++)
                 Prim(PrimitiveType.Cube, "Доска", t, new Vector3(i * 0.6f, 0.05f, 0f), new Vector3(0.3f, 0.1f, 2.4f), wood * 0.9f);
             MakeVehicle(p, AddHullPoints(t, 1.6f, 2.4f, floorY: 0.1f, topY: 0.5f));
-            DressHull(p, "pallet", new Vector3(0f, -0.05f, 0f), new Vector3(1.6f, 0.3f, 2.4f));
+            DressHull(p, "PalletReplacement", new Vector3(0f, -0.05f, 0f), new Vector3(1.6f, 0.3f, 2.4f));
             MakeFlippable(p, pivotY: -0.05f, floorShift: 0f, wheelShift: 0f);
         }
 
@@ -1219,7 +1219,7 @@ namespace JunkRace.EditorTools
             MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f,
                                          steeringPosition: new Vector3(-0.38f, 0f, 0.72f)));
             // Модель стола обычно стоит на ножках — переворачиваем: у нас он вверх ногами.
-            DressHull(p, "table", new Vector3(0f, (legH - 0.06f) / 2f, 0f), new Vector3(w, legH + 0.06f, l), Quaternion.Euler(180f, 0f, 0f));
+            DressHull(p, "TableReplacement", new Vector3(0f, (legH - 0.06f) / 2f, 0f), new Vector3(w, legH + 0.06f, l), Quaternion.Euler(180f, 0f, 0f));
             // Ножками вниз: столешница на месте, колёса опускаются ниже ножек.
             MakeFlippable(p, pivotY: -0.03f, floorShift: 0f, wheelShift: -legH);
         }
@@ -1572,7 +1572,7 @@ namespace JunkRace.EditorTools
             body.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
             Set(p, "thrust", 2500f);
             Set(p, "useSpecialButton", true);
-            DressPart(p, SpecialFolder, "hoover", Vector3.zero, new Vector3(0.5f, 0.5f, 1f));
+            DressPart(p, SpecialFolder, "VacuumReplacement", Vector3.zero, new Vector3(0.5f, 0.5f, 1f), Quaternion.Euler(90f, 0f, 0f));
         }
 
         enum SteerStyle { Wheel, Laptop }
@@ -1704,7 +1704,7 @@ namespace JunkRace.EditorTools
             var canopy = Prim(PrimitiveType.Sphere, "Купол", p.transform, new Vector3(0f, 1.3f, 0f), new Vector3(0.5f, 0.25f, 0.5f), new Color(0.9f, 0.2f, 0.5f), false);
             Set(p, "canopy", canopy.transform);
             // Модель зонта: целиком в «купол» — раскрытие растягивает её вширь (закрытый — узкий).
-            var model = ModelFitter.Find(SpecialFolder, "umbrella");
+            var model = ModelFitter.Find(SpecialFolder, "UmbrellaReplacement");
             if (model != null)
             {
                 foreach (var r in p.GetComponentsInChildren<MeshRenderer>(true)) { var mf = r.GetComponent<MeshFilter>(); Object.DestroyImmediate(r); if (mf) Object.DestroyImmediate(mf); }
@@ -1726,7 +1726,7 @@ namespace JunkRace.EditorTools
             Prim(PrimitiveType.Sphere, "Тело", p.transform, Vector3.zero, Vector3.one * 0.6f, Color.yellow, false);
             Prim(PrimitiveType.Sphere, "Голова", p.transform, new Vector3(0f, 0.35f, 0.2f), Vector3.one * 0.35f, Color.yellow, false);
             Prim(PrimitiveType.Cube, "Клюв", p.transform, new Vector3(0f, 0.33f, 0.4f), new Vector3(0.15f, 0.06f, 0.15f), new Color(1f, 0.5f, 0f), false);
-            DressPart(p, SpecialFolder, "duck", new Vector3(0f, 0.1f, 0.08f), new Vector3(0.6f, 0.8f, 0.76f));
+            DressPart(p, SpecialFolder, "RubberDuckReplacement", new Vector3(0f, 0.1f, 0.08f), new Vector3(0.6f, 0.8f, 0.76f), preserveFacing: true);
         }
 
         // ---------------- Хелперы ----------------

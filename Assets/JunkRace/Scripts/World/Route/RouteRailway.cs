@@ -11,6 +11,11 @@ namespace JunkRace
     public sealed class RouteRailway : MonoBehaviour
     {
         const float CrossingApproach = 28f;
+        const float MaxRailGrade = 0.075f;
+        const float CrossingGradeLimit = 0.01f;
+        const float RoadScanStep = 1.5f;
+        const float RoadBucketSize = 24f;
+        const float RailSurfaceOffset = 0.035f;
         const float YardClearance = 18f;
         const float YardApproachSide = 95f;
         const float YardApproachBack = 280f;
@@ -23,7 +28,8 @@ namespace JunkRace
         const float SecondEntryDistance = 105f;
         const int WagonsPerTrain = 9;
         const float Speed = 76.5f;
-        const float MaxDetour = 100f;
+        const float MaxDetour = 34f;
+        const float SpineSmoothing = 36f;
         const float ServiceInterval = 8.5f;
         const float ServiceSpacing = Speed * ServiceInterval;
 
@@ -38,6 +44,7 @@ namespace JunkRace
         Material material, concrete;
         bool loop, networked;
         float phase;
+        float secondEntryLimit = SecondEntryDistance;
         double soloStart;
 
         public int CrossingCount => crossings.Count;
@@ -69,25 +76,184 @@ namespace JunkRace
             var spine = BuildSpine(map, reversed, minTrackZ, out var openRoad);
             if (spine.Length < 80f) return null;
             int target = size == RaceSize.Long ? 5 : size == RaceSize.Medium ? 4 : 2;
-            var crossingIndices = PickCrossings(spine, openRoad, crossingSite, target);
-            if (crossingIndices.Count < (size == RaceSize.Medium ? 3 : target))
-                Debug.LogWarning($"JunkRace: найдено только {crossingIndices.Count} мест для переездов из {target}.");
 
             var go = new GameObject("Железная дорога");
             go.transform.SetParent(parent, false);
             var railway = go.AddComponent<RouteRailway>();
             railway.trackMesh = trackFilter.sharedMesh;
             railway.trainModels = models;
-            // Нечётное число переездов оставляет концы на разных сторонах трассы.
-            railway.loop = map.Circuit && crossingIndices.Count % 2 == 0;
             railway.networked = GameSession.Mode != GameMode.Solo;
             railway.phase = Mathf.Abs(seed % 97);
             railway.material = new Material(Shader.Find("JunkRace/Toon")) { name = "Палитра железной дороги" };
             railway.material.SetTexture("_BaseMap", palette);
             railway.material.SetFloat("_NoiseStrength", 0f);
             railway.concrete = new Material(railway.material.shader) { color = new Color(0.48f, 0.43f, 0.38f) };
-            railway.LaySpine(map, spine, crossingIndices, ground, minTrackZ);
+            railway.PlanSafeTrack(map, spine, openRoad, crossingSite, target, ground, minTrackZ);
             return railway;
+        }
+
+        void PlanSafeTrack(RouteMap map, RoutePath spine, List<bool> openRoad,
+                           Func<Vector3, float, CrossingSite> crossingSite, int target, float ground, float minTrackZ)
+        {
+            var road = IndexRoad(map);
+            int minimum = target == 4 ? 3 : target;
+            var best = new List<RouteSample>();
+            var bestCrossings = new List<RouteSample>();
+            bool bestLoop = false;
+            int count = target;
+            while (count > 0)
+            {
+                var selected = PickCrossings(spine, openRoad, crossingSite, count);
+                count = selected.Count;
+                if (count == 0) break;
+                loop = map.Circuit && count % 2 == 0;
+                bool found = false;
+                for (int side = -1; side <= 1; side += 2)
+                {
+                    ResetLayout();
+                    LaySpine(map, spine, selected, ground, minTrackZ, side);
+                    if (!IsTrackClear(road)) continue;
+                    if (count >= minimum)
+                    {
+                        PlanEntries(map);
+                        return;
+                    }
+                    best.AddRange(rail.Samples);
+                    bestCrossings.AddRange(crossings);
+                    bestLoop = loop;
+                    found = true;
+                    break;
+                }
+                if (found) break;
+                count--;
+            }
+            // На широких кольцах более короткий поперечный участок остаётся между ветками
+            // и не цепляет вторую сторону трассы той же дугой.
+            float[] reaches = map.Circuit ? new[] { 104f, 82f, 68f, 56f } : new[] { 104f };
+            foreach (float reach in reaches)
+            {
+                if (!TryFlatConnectors(map, spine, road, crossingSite, ground, target, bestCrossings.Count, reach)) continue;
+                if (crossings.Count >= minimum)
+                {
+                    PlanEntries(map);
+                    return;
+                }
+                best.Clear();
+                bestCrossings.Clear();
+                best.AddRange(rail.Samples);
+                bestCrossings.AddRange(crossings);
+                bestLoop = loop;
+            }
+            if (best.Count == 0) LayOutsideRoad(map, ground);
+            else
+            {
+                ResetLayout();
+                foreach (var sample in best) rail.Add(sample);
+                crossings.AddRange(bestCrossings);
+                loop = bestLoop;
+            }
+            PlanEntries(map);
+        }
+
+        void ResetLayout()
+        {
+            rail.Samples.Clear();
+            rail.Dist.Clear();
+            crossings.Clear();
+        }
+
+        bool TryFlatConnectors(RouteMap map, RoutePath spine, Dictionary<int, List<RoadStrip>> road,
+                               Func<Vector3, float, CrossingSite> crossingSite, float ground, int target, int existing, float reach)
+        {
+            // Сначала проверяем каждый прямой переезд независимо. Безопасные переезды
+            // соединяем широкими дугами поочерёдно с двух внешних сторон трассы.
+            var candidates = new List<RouteSample>();
+            loop = false;
+            for (int i = 1; i + 1 < spine.Samples.Count; i++)
+            {
+                var sample = spine.Samples[i];
+                if (sample.Pos.z < map.Start.Pos.z + 95f || Mathf.Abs(sample.Forward.z) < 0.72f ||
+                    !FlatCrossing(spine, i) || crossingSite(sample.Pos, 8f) == CrossingSite.Blocked) continue;
+                if (candidates.Exists(site => Mathf.Abs(site.Pos.z - sample.Pos.z) < 14f)) continue;
+                ResetLayout();
+                AddStraightCrossing(sample, 1, ground, reach);
+                if (IsTrackClear(road)) candidates.Add(sample);
+            }
+
+            candidates.Sort((a, b) => a.Pos.z.CompareTo(b.Pos.z));
+            for (int length = Mathf.Min(target, candidates.Count); length > existing; length--)
+            {
+                for (int spacing = 140; spacing >= 65; spacing -= 15)
+                {
+                    var selected = new List<RouteSample>();
+                    int cursor = 0;
+                    for (int i = 0; i < length; i++)
+                    {
+                        float aim = Mathf.Lerp(candidates[0].Pos.z, candidates[candidates.Count - 1].Pos.z,
+                            (i + 0.5f) / length);
+                        while (cursor + 1 < candidates.Count &&
+                               candidates[cursor + 1].Pos.z <= candidates[candidates.Count - 1].Pos.z - (length - i - 1) * spacing &&
+                               Mathf.Abs(candidates[cursor + 1].Pos.z - aim) < Mathf.Abs(candidates[cursor].Pos.z - aim))
+                            cursor++;
+                        if (cursor >= candidates.Count) break;
+                        var site = candidates[cursor++];
+                        selected.Add(site);
+                        while (cursor < candidates.Count && candidates[cursor].Pos.z < site.Pos.z + spacing) cursor++;
+                    }
+                    if (selected.Count != length) continue;
+
+                    for (int direction = -1; direction <= 1; direction += 2)
+                    {
+                        ResetLayout();
+                        int heading = direction;
+                        foreach (var site in selected)
+                        {
+                            if (rail.Samples.Count > 0) ConnectCrossings(site, heading, ground, reach);
+                            AddStraightCrossing(site, heading, ground, reach);
+                            crossings.Add(site);
+                            heading = -heading;
+                        }
+                        if (!IsTrackClear(road)) continue;
+                        secondEntryLimit = Mathf.Min(54f, reach - 38f);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        void AddStraightCrossing(RouteSample crossing, int direction, float ground, float reach)
+        {
+            for (float along = -reach; along <= reach; along += 2f)
+            {
+                var sample = crossing;
+                sample.Pos += Vector3.right * (along * direction);
+                sample.Pos.y = Mathf.Lerp(crossing.Pos.y, ground,
+                    Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(22f, reach - 8f, Mathf.Abs(along)))) + RailSurfaceOffset;
+                sample.Forward = Vector3.right * direction;
+                rail.Add(sample);
+            }
+        }
+
+        void ConnectCrossings(RouteSample next, int direction, float ground, float reach)
+        {
+            var from = rail.Last.Pos;
+            var to = next.Pos - Vector3.right * (reach * direction);
+            to.y = ground + RailSurfaceOffset;
+            Vector3 outward = -Vector3.right * direction;
+            float length = Mathf.Clamp((to.z - from.z) * 0.38f, 34f, 48f);
+            var a = from + outward * length;
+            var b = to + outward * length;
+            int steps = Mathf.CeilToInt((Vector3.Distance(from, to) + length) / TrackStep);
+            for (int i = 1; i < steps; i++)
+            {
+                float t = i / (float)steps;
+                var sample = next;
+                var ab = Vector3.Lerp(a, b, t);
+                sample.Pos = Vector3.Lerp(Vector3.Lerp(Vector3.Lerp(from, a, t), ab, t),
+                    Vector3.Lerp(ab, Vector3.Lerp(b, to, t), t), t);
+                rail.Add(sample);
+            }
         }
 
         static GameObject LoadTrainModel(string name) => Resources.Load<GameObject>("Railway/" + name);
@@ -154,6 +320,7 @@ namespace JunkRace
                 {
                     float distance = spine.Dist[i];
                     if (distance < endMargin || distance > spine.Length - endMargin) continue;
+                    if (!FlatCrossing(spine, i)) continue;
                     var sample = spine.Samples[i];
                     var before = spine.At(distance - span);
                     var after = spine.At(distance + span);
@@ -236,29 +403,210 @@ namespace JunkRace
             return best;
         }
 
-        void LaySpine(RouteMap map, RoutePath spine, List<int> crossingIndices, float ground, float minTrackZ)
+        static bool FlatCrossing(RoutePath spine, int index)
+        {
+            // Проверяем обе стороны всей группы путей, а не только среднюю точку переезда.
+            const float halfSpan = 20f;
+            float from = spine.Dist[index] - halfSpan;
+            float to = spine.Dist[index] + halfSpan;
+            for (int i = index; i > 0 && spine.Dist[i] > from; i--)
+                if (!FlatRoadSegment(spine.Samples[i - 1], spine.Samples[i])) return false;
+            for (int i = index; i + 1 < spine.Samples.Count && spine.Dist[i] < to; i++)
+                if (!FlatRoadSegment(spine.Samples[i], spine.Samples[i + 1])) return false;
+            return true;
+        }
+
+        static bool FlatRoadSegment(RouteSample a, RouteSample b)
+        {
+            if (!a.Road || !b.Road || a.Bridge || b.Bridge) return false;
+            Vector3 delta = b.Pos - a.Pos;
+            float distanceSquared = delta.x * delta.x + delta.z * delta.z;
+            return Mathf.Abs(delta.y) < Mathf.Sqrt(distanceSquared) * CrossingGradeLimit;
+        }
+
+        readonly struct RoadStrip
+        {
+            public readonly RouteSample A, B;
+            public readonly Vector2 Start, Delta;
+            public readonly float LengthSquared;
+            public readonly bool Flat;
+
+            public RoadStrip(RouteSample a, RouteSample b)
+            {
+                A = a;
+                B = b;
+                Start = new Vector2(a.Pos.x, a.Pos.z);
+                Delta = new Vector2(b.Pos.x - a.Pos.x, b.Pos.z - a.Pos.z);
+                LengthSquared = Delta.sqrMagnitude;
+                Flat = FlatRoadSegment(a, b);
+            }
+        }
+
+        static Dictionary<int, List<RoadStrip>> IndexRoad(RouteMap map)
+        {
+            var index = new Dictionary<int, List<RoadStrip>>();
+            foreach (var path in map.Paths)
+            {
+                if (!path.BuildMesh) continue;
+                for (int i = 1; i < path.Samples.Count; i++)
+                {
+                    var a = path.Samples[i - 1];
+                    var b = path.Samples[i];
+                    if (!a.Road || !b.Road) continue;
+                    var strip = new RoadStrip(a, b);
+                    if (strip.LengthSquared < 0.0001f) continue;
+                    float margin = Mathf.Max(a.HalfWidth, b.HalfWidth) + 2f;
+                    int first = Mathf.FloorToInt((Mathf.Min(a.Pos.z, b.Pos.z) - margin) / RoadBucketSize);
+                    int last = Mathf.FloorToInt((Mathf.Max(a.Pos.z, b.Pos.z) + margin) / RoadBucketSize);
+                    for (int cell = first; cell <= last; cell++)
+                    {
+                        if (!index.TryGetValue(cell, out var strips)) index[cell] = strips = new List<RoadStrip>();
+                        strips.Add(strip);
+                    }
+                }
+            }
+            return index;
+        }
+
+        bool IsTrackClear(Dictionary<int, List<RoadStrip>> road)
+        {
+            int steps = Mathf.CeilToInt(rail.Length / RoadScanStep);
+            var positions = new Vector2[TrackCount][];
+            for (int lane = 0; lane < TrackCount; lane++)
+            {
+                positions[lane] = new Vector2[steps + 1];
+                for (int i = 0; i <= steps; i++)
+                {
+                    var point = TrackPosition(rail.Length * i / steps, TrackOffset(lane));
+                    var flat = new Vector2(point.x, point.z);
+                    positions[lane][i] = flat;
+                    if (!road.TryGetValue(Mathf.FloorToInt(point.z / RoadBucketSize), out var strips)) continue;
+                    foreach (var strip in strips)
+                    {
+                        float t = Mathf.Clamp01(Vector2.Dot(flat - strip.Start, strip.Delta) / strip.LengthSquared);
+                        // Центры последней секции рельса находятся примерно в метре от наружного рельса.
+                        float width = Mathf.Lerp(strip.A.HalfWidth, strip.B.HalfWidth, t) + 1.45f;
+                        if ((flat - strip.Start - strip.Delta * t).sqrMagnitude >= width * width) continue;
+                        if (!strip.Flat || Mathf.Abs(point.y - Mathf.Lerp(strip.A.Pos.y, strip.B.Pos.y, t)) > 0.26f)
+                            return false;
+                    }
+                }
+            }
+
+            // После смещения крайнего пути проверяем петли и пересечения между соседними путями.
+            const int window = 74;
+            for (int lane = 0; lane < TrackCount; lane++)
+                for (int other = lane; other < TrackCount; other++)
+                    for (int i = 0; i < steps; i++)
+                        for (int j = lane == other ? i + 2 : Mathf.Max(0, i - window);
+                             j < steps && j <= i + window; j++)
+                            if (SegmentsCross(positions[lane][i], positions[lane][i + 1],
+                                              positions[other][j], positions[other][j + 1]))
+                                return false;
+            return true;
+        }
+
+        static float Cross(Vector2 a, Vector2 b) => a.x * b.y - a.y * b.x;
+
+        static bool SegmentsCross(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+        {
+            Vector2 along = b - a, across = d - c;
+            float denominator = Cross(along, across);
+            if (Mathf.Abs(denominator) < 0.001f) return false;
+            float t = Cross(c - a, across) / denominator;
+            float u = Cross(c - a, along) / denominator;
+            return t > 0.001f && t < 0.999f && u > 0.001f && u < 0.999f;
+        }
+
+        void LayOutsideRoad(RouteMap map, float ground)
+        {
+            // Если рельеф не позволяет проложить безопасные переезды, оставляем поезда сбоку от карты.
+            loop = false;
+            crossings.Clear();
+            rail.Samples.Clear();
+            rail.Dist.Clear();
+            float minX = map.Start.Pos.x - YardApproachSide;
+            float maxZ = map.Start.Pos.z + 200f;
+            foreach (var path in map.Paths)
+                if (path.BuildMesh)
+                    foreach (var sample in path.Samples)
+                    {
+                        minX = Mathf.Min(minX, sample.Pos.x - sample.HalfWidth - 36f);
+                        maxZ = Mathf.Max(maxZ, sample.Pos.z + 65f);
+                    }
+            var start = new Vector3(minX, ground + RailSurfaceOffset, map.Start.Pos.z - YardApproachBack);
+            rail.Add(new RouteSample { Pos = start, Forward = Vector3.forward });
+            rail.Add(new RouteSample { Pos = new Vector3(minX, start.y, maxZ), Forward = Vector3.forward });
+        }
+
+        void LaySpine(RouteMap map, RoutePath spine, List<int> crossingIndices, float ground, float minTrackZ, float initialSide)
         {
             var track = new RoutePath("Путь за воротами");
-            var detours = PlanDetours(map, spine, crossingIndices, ground);
+            var anchors = new List<(int index, float height)> { (0, ground) };
             for (int i = 0; i < spine.Samples.Count; i++)
             {
                 var sample = spine.Samples[i];
                 float d = spine.Dist[i];
-                float side = -1f;
+                float side = initialSide;
+                float toCrossing = float.PositiveInfinity;
+                bool atCrossing = false;
                 foreach (int crossing in crossingIndices)
                 {
                     float relative = d - spine.Dist[crossing];
+                    toCrossing = Mathf.Min(toCrossing, Mathf.Abs(relative));
                     side *= 1f - 2f * Mathf.SmoothStep(0f, 1f, (relative + CrossingApproach) / (2f * CrossingApproach));
-                    if (crossing == i) crossings.Add(sample);
+                    if (crossing != i) continue;
+                    crossings.Add(sample);
+                    atCrossing = true;
                 }
 
-                float offset = (sample.HalfWidth + 13f + detours[i]) * side;
-                sample.Pos += sample.Right * offset;
-                float roadBlend = Mathf.InverseLerp(sample.HalfWidth, sample.HalfWidth + 6f, Mathf.Abs(offset));
-                sample.Pos.y = Mathf.Lerp(sample.Pos.y, Mathf.Max(ground, sample.Pos.y), roadBlend) + 0.035f;
+                // Дорога может резко петлять, а рельсы берут среднее направление на длинном участке.
+                var before = spine.At(d - SpineSmoothing).Pos;
+                var after = spine.At(d + SpineSmoothing).Pos;
+                var tangent = Vector3.ProjectOnPlane(after - before, Vector3.up).normalized;
+                var center = (before + after + sample.Pos * 2f) * 0.25f;
+                float blend = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, 38f, toCrossing));
+                float detour = MaxDetour * Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(50f, 150f, toCrossing));
+                float endBlend = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, 90f, Mathf.Min(d, spine.Length - d)));
+                var horizontal = Vector3.Lerp(sample.Pos, center, blend * endBlend);
+                var right = Vector3.Cross(Vector3.up, tangent);
+                var incoming = Vector3.ProjectOnPlane(sample.Pos - before, Vector3.up).normalized;
+                var outgoing = Vector3.ProjectOnPlane(after - sample.Pos, Vector3.up).normalized;
+                float turn = Vector3.Dot(outgoing - incoming, right);
+                float offset = (sample.HalfWidth + 13f + detour * endBlend) * side;
+                // На внутренней стороне поворота большой отступ может увезти пути за центр
+                // кривизны и развернуть их назад. Оставляем место и для крайнего пути.
+                if (offset * turn > 0f)
+                {
+                    float radius = (Mathf.Min(d, SpineSmoothing) + Mathf.Min(spine.Length - d, SpineSmoothing))
+                        / (2f * Mathf.Abs(turn));
+                    offset = Mathf.Sign(offset) * Mathf.Min(Mathf.Abs(offset), Mathf.Max(4f, radius - 15f));
+                }
+                horizontal += right * offset;
+                sample.Pos.x = horizontal.x;
+                sample.Pos.z = horizontal.z;
                 sample.Pos.z = Mathf.Max(minTrackZ, sample.Pos.z);
-                if (track.Samples.Count == 0 || (track.Last.Pos - sample.Pos).sqrMagnitude > 0.001f)
+                Vector3 delta = track.Samples.Count == 0 ? Vector3.zero : sample.Pos - track.Last.Pos;
+                delta.y = 0f;
+                if (track.Samples.Count == 0 || atCrossing || Vector3.Dot(delta, tangent) > 0.02f)
                     track.Add(sample);
+                if (atCrossing) anchors.Add((track.Samples.Count - 1, sample.Pos.y));
+            }
+
+            anchors.Add((track.Samples.Count - 1, ground));
+            track = SmoothTrack(SmoothTrack(track, anchors, minTrackZ), anchors, minTrackZ);
+            var heightAnchors = new List<(float distance, float height)>();
+            foreach (var anchor in anchors)
+                heightAnchors.Add((track.Dist[anchor.index], anchor.height));
+            int heightSegment = 0;
+            for (int i = 0; i < track.Samples.Count; i++)
+            {
+                float distance = track.Dist[i];
+                while (distance > heightAnchors[heightSegment + 1].distance) heightSegment++;
+                var sample = track.Samples[i];
+                sample.Pos.y = RailHeight(distance, heightAnchors[heightSegment], heightAnchors[heightSegment + 1], ground)
+                    + RailSurfaceOffset;
+                track.Samples[i] = sample;
             }
 
             track.SmoothForwards();
@@ -269,7 +617,7 @@ namespace JunkRace
             var last = track.Last;
             if (loop)
                 rail.Add(rail.Samples[0]);
-            else
+            else if (!map.Circuit)
             {
                 last.Pos += last.Forward * 50f;
                 last.Pos.z = Mathf.Max(minTrackZ, last.Pos.z);
@@ -277,7 +625,46 @@ namespace JunkRace
             }
 
             rail.SmoothForwards();
-            PlanEntries(map);
+        }
+
+        static RoutePath SmoothTrack(RoutePath source, List<(int index, float height)> anchors, float minTrackZ)
+        {
+            var result = new RoutePath(source.Name);
+            int section = 0;
+            for (int i = 0; i < source.Samples.Count; i++)
+            {
+                if (i > anchors[section + 1].index) section++;
+                var sample = source.Samples[i];
+                float d = source.Dist[i];
+                float edge = Mathf.Min(d - source.Dist[anchors[section].index],
+                                       source.Dist[anchors[section + 1].index] - d);
+                var average = (source.At(d - 30f).Pos + source.At(d + 30f).Pos
+                    + 2f * (source.At(d - 15f).Pos + source.At(d + 15f).Pos) + 3f * sample.Pos) / 9f;
+                float weight = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, 22f, edge));
+                sample.Pos = Vector3.Lerp(sample.Pos, average, weight);
+                sample.Pos.z = Mathf.Max(minTrackZ, sample.Pos.z);
+                result.Add(sample);
+            }
+            return result;
+        }
+
+        static float RailHeight(float distance, (float distance, float height) from,
+                                (float distance, float height) to, float ground)
+        {
+            // На переезде уровень задаёт дорога. Между переездами пути идут по ровному
+            // полотну или одним плавным уклоном, если для двух спусков мало места.
+            float fromRamp = Mathf.Abs(from.height - ground) * 1.5f / MaxRailGrade;
+            float toRamp = Mathf.Abs(to.height - ground) * 1.5f / MaxRailGrade;
+            if (to.distance - from.distance < fromRamp + toRamp)
+                return Mathf.SmoothStep(from.height, to.height, Mathf.InverseLerp(from.distance, to.distance, distance));
+
+            float fromEnd = from.distance + fromRamp;
+            float toStart = to.distance - toRamp;
+            if (distance < fromEnd)
+                return Mathf.SmoothStep(from.height, ground, Mathf.InverseLerp(from.distance, fromEnd, distance));
+            if (distance > toStart)
+                return Mathf.SmoothStep(ground, to.height, Mathf.InverseLerp(toStart, to.distance, distance));
+            return ground;
         }
 
         void PlanEntries(RouteMap map)
@@ -305,7 +692,7 @@ namespace JunkRace
             }
             else
             {
-                entries[1] = SecondEntryDistance;
+                entries[1] = Mathf.Min(secondEntryLimit, rail.Length * 0.29f);
                 entries[ReverseTrack] = map.Circuit ? FindReverseEntry(map) : rail.Length;
             }
 
@@ -367,8 +754,8 @@ namespace JunkRace
         void AddYardApproach(Vector3 yardGate, RouteSample join, float ground, bool circuit)
         {
             // Линия идёт за пределами двора и начинает поворачивать к трассе уже у ворот.
-            float side = circuit ? 1f : -1f;
-            var far = new Vector3(yardGate.x + side * YardApproachSide, ground + 0.035f, yardGate.z - YardApproachBack);
+            float side = circuit ? 1f : Mathf.Sign(join.Pos.x - yardGate.x);
+            var far = new Vector3(yardGate.x + side * YardApproachSide, ground + RailSurfaceOffset, yardGate.z - YardApproachBack);
             var bend = far + Vector3.forward * 250f;
             var control = bend + Vector3.forward * (circuit ? 66f : 20f);
             var joinControl = join.Pos - join.Forward * 28f;
@@ -422,68 +809,6 @@ namespace JunkRace
             var collider = piece.GetComponent<Collider>();
             collider.enabled = false;
             Destroy(collider);
-        }
-
-        static float[] PlanDetours(RouteMap map, RoutePath spine, List<int> crossings, float ground)
-        {
-            var offsets = new float[spine.Samples.Count];
-            for (int section = 0; section <= crossings.Count; section++)
-            {
-                int first = section == 0 ? 0 : crossings[section - 1];
-                int last = section == crossings.Count ? spine.Samples.Count - 1 : crossings[section];
-                float start = spine.Dist[first] + (section == 0 ? 0f : CrossingApproach);
-                float end = spine.Dist[last] - (section == crossings.Count ? 0f : CrossingApproach);
-                float side = section % 2 == 0 ? -1f : 1f;
-                float length = end - start;
-                bool placed = false;
-                // Если дуге мешает поворот или соседняя ветка, ищем более короткое окно.
-                for (int divisions = 1; divisions <= 4 && !placed; divisions *= 2)
-                {
-                    float width = length / divisions;
-                    if (width < 48f) break;
-                    for (int window = 0; window < 2 * divisions - 1 && !placed; window++)
-                    {
-                        float from = start + window * width * 0.5f;
-                        float to = from + width;
-                        for (float peak = Mathf.Min(MaxDetour, width * 0.36f); peak >= 14f; peak *= 0.5f)
-                        {
-                            if (!TryDetour(map, spine, offsets, first, last, from, to, peak, side, ground))
-                            {
-                                Array.Clear(offsets, first, last - first + 1);
-                                continue;
-                            }
-                            placed = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            return offsets;
-        }
-
-        static bool TryDetour(RouteMap map, RoutePath spine, float[] offsets, int first, int last,
-                              float start, float end, float peak, float side, float ground)
-        {
-            Vector3 previous = default;
-            bool hasPrevious = false;
-            for (int i = first; i <= last; i++)
-            {
-                float distance = spine.Dist[i];
-                if (distance < start) continue;
-                if (distance > end) break;
-                var sample = spine.Samples[i];
-                float wave = Mathf.Sin(Mathf.PI * Mathf.InverseLerp(start, end, distance));
-                offsets[i] = peak * wave * wave;
-                var position = sample.Pos + sample.Right * (side * (sample.HalfWidth + 13f + offsets[i]));
-                position.y = Mathf.Max(ground, position.y);
-                // Отвод не должен пересекать соседнюю ветку или загибаться назад на повороте.
-                if (!map.IsClear(position, 2f) || hasPrevious &&
-                    Vector3.Dot(position - previous, sample.Forward) <= 0f)
-                    return false;
-                previous = position;
-                hasPrevious = true;
-            }
-            return hasPrevious;
         }
 
         internal void ReserveGround(List<Bounds> areas)

@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: 23e6a1f63e45d4153bb0cae19b9812e8
+guid: c6f535157d3a1460f9d1d231d0c8763c
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
@@ -105,6 +105,6 @@ ModelImporter:
   importBlendShapeDeformPercent: 1
   remapMaterialsIfMaterialImportModeIsNone: 0
   additionalBone: 0
-  userData: JunkRace.baseColor=0d1512ce5b95e4a23b246c4fa9e9794a
+  userData: JunkRace.baseColor=725003a065485435ea0bfeb02924935c
   assetBundleName: 
   assetBundleVariant: 

@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: 62bbff8743362401395834d38f21835c
+guid: 8621937d321934ecd9ef2dba3b08f373
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
@@ -30,7 +30,7 @@ ModelImporter:
     extraExposedTransformPaths: []
     extraUserProperties: []
     clipAnimations: []
-    isReadable: 1
+    isReadable: 0
   meshes:
     lODScreenPercentages: []
     globalScale: 1
@@ -105,6 +105,6 @@ ModelImporter:
   importBlendShapeDeformPercent: 1
   remapMaterialsIfMaterialImportModeIsNone: 0
   additionalBone: 0
-  userData: JunkRace.baseColor=d9942bb7df9c949bcadc48328f15b0bf
+  userData: JunkRace.baseColor=8e4a79d3de6854c6ab7be7c4cbb0c4f6
   assetBundleName: 
   assetBundleVariant: 

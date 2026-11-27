@@ -25,7 +25,7 @@ namespace JunkRace
         const string MsgEvt = "JR_EVT", MsgRoster = "JR_ROSTER", MsgFull = "JR_FULL", MsgPoses = "JR_POSES", MsgWorld = "JR_WORLD";
 
         public const byte ReqGrab = 1, ReqRelease = 2, ReqEnter = 3, ReqExit = 4, ReqFlip = 5, ReqSearch = 6, ReqSit = 7, ReqFlipHull = 8, ReqReady = 9, ReqBuildReady = 10;
-        const byte EvtGrab = 1, EvtRelease = 2, EvtAttach = 3, EvtDetach = 4, EvtDriver = 5, EvtFinish = 6, EvtSearch = 7, EvtSeat = 8, EvtOwner = 9, EvtHullFlip = 10, EvtPhase = 11, EvtEject = 12, EvtBuildReady = 13;
+        const byte EvtGrab = 1, EvtRelease = 2, EvtAttach = 3, EvtDetach = 4, EvtDriver = 5, EvtFinish = 6, EvtSearch = 7, EvtSeat = 8, EvtOwner = 9, EvtHullFlip = 10, EvtPhase = 11, EvtEject = 12, EvtBuildReady = 13, EvtTrainRecovery = 14;
 
         const float SendInterval = 1f / 20f;
         const int SnapshotBudget = 36;   // ~36 × 30 байт — влезает в один UDP-пакет
@@ -547,6 +547,16 @@ namespace JunkRace
             SendToClients(MsgEvt, w, NetworkDelivery.ReliableSequenced);
         }
 
+        internal void BroadcastTrainRecovery(Vehicle vehicle)
+        {
+            using var w = new FastBufferWriter(40, Allocator.Temp);
+            w.WriteValueSafe(EvtTrainRecovery);
+            w.WriteValueSafe((ushort)vehicle.RootPart.NetIndex);
+            w.WriteValueSafe(vehicle.Body.position);
+            w.WriteValueSafe(vehicle.Body.rotation);
+            SendToClients(MsgEvt, w, NetworkDelivery.ReliableSequenced);
+        }
+
         void BroadcastBuildReady()
         {
             var timer = RaceTimer.Instance;
@@ -838,6 +848,19 @@ namespace JunkRace
                 case EvtBuildReady:
                     ReadBuildReady(r, RaceTimer.Instance);
                     break;
+                case EvtTrainRecovery:
+                {
+                    r.ReadValueSafe(out ushort vehicleIndex);
+                    r.ReadValueSafe(out Vector3 position);
+                    r.ReadValueSafe(out Quaternion rotation);
+                    var vehicle = VehicleAt(vehicleIndex);
+                    if (vehicle != null)
+                    {
+                        targets.Remove(vehicleIndex);
+                        vehicle.transform.SetPositionAndRotation(position, rotation);
+                    }
+                    break;
+                }
                 case EvtEject:
                 {
                     r.ReadValueSafe(out ushort vehicleIndex);
