@@ -103,7 +103,7 @@ namespace JunkRace
 #endif
         }
         public const string TestRouteKey = "JunkRace.TestRoute";
-        internal static bool UseTestRoute => TestRoute && GameSession.Biome == RaceBiome.Random && !GameSession.IsTutorial;
+        internal static bool UseTestRoute => TestRoute && GameSession.Mode == GameMode.Solo && GameSession.Biome == RaceBiome.Random && !GameSession.IsTutorial;
         /// <summary>Участки трассы: прогресс начала (м от старта) и биом — по ним погода.</summary>
         public readonly List<float> SectionStarts = new List<float>();
         public readonly List<Biome> SectionBiomes = new List<Biome>();
@@ -112,6 +112,7 @@ namespace JunkRace
         bool finalized;
         /// <summary>Стройка трассы по кусочкам (GenerateSteps), идёт в фоне ещё на свалке.</summary>
         IEnumerator<object> job;
+        Coroutine routeDriver;
         bool jobDone, jobFast;
         int jobSeed;
         List<string> jobNames;
@@ -183,6 +184,7 @@ namespace JunkRace
         /// <summary>Сид выбран: кучи, детали и декорации на свалке — по нему, у всех одинаково.</summary>
         public void PrepareYard(int seed, int players)
         {
+            if (YardReady) return;
             Seed = seed;
             Players = Mathf.Clamp(players, 1, 4);
             BuildSurroundings();
@@ -257,19 +259,27 @@ namespace JunkRace
         {
             if (job != null || finalized || !YardReady) return;
             jobDone = false;
-            job = GenerateSteps(Seed, Players);
-            StartCoroutine(DriveRouteJob());
+            job = CreateRouteSteps(Seed, Players);
+            routeDriver = StartCoroutine(DriveRouteJob(job));
         }
 
-        System.Collections.IEnumerator DriveRouteJob()
+        System.Collections.IEnumerator DriveRouteJob(IEnumerator<object> steps)
         {
-            while (job != null && !jobDone)
+            while (job == steps && !jobDone)
             {
                 float t0 = Time.realtimeSinceStartup;
-                while (job != null && !jobDone && Time.realtimeSinceStartup - t0 < SliceBudget)
-                    if (!job.MoveNext()) jobDone = true;
+                while (job == steps && !jobDone && Time.realtimeSinceStartup - t0 < SliceBudget)
+                    if (!steps.MoveNext()) jobDone = true;
                 yield return null;
             }
+            routeDriver = null;
+        }
+
+        void StopRouteDriver()
+        {
+            if (routeDriver == null) return;
+            StopCoroutine(routeDriver);
+            routeDriver = null;
         }
 
         /// <summary>Построить трассу сразу (зашёл посреди гонки): что не достроено — за этот кадр. Повторно — ничего.</summary>
@@ -277,6 +287,7 @@ namespace JunkRace
         {
             if (finalized || !YardReady) return;
             StartRouteJob();
+            StopRouteDriver();
             while (!jobDone && job != null) if (!job.MoveNext()) jobDone = true;
             FinalizeRoute();
         }
@@ -306,20 +317,31 @@ namespace JunkRace
         /// <summary>Построить трассу целиком сразу (редакторские инструменты и проверки).</summary>
         public void Generate(int seed, int players = 1)
         {
-            job = GenerateSteps(seed, players);
+            StopRouteDriver();
+            job?.Dispose();
+            if (routeRoot != null)
+            {
+                routeRoot.gameObject.SetActive(false);
+                if (Application.isPlaying) Destroy(routeRoot.gameObject);
+                else DestroyImmediate(routeRoot.gameObject);
+            }
+            if (RouteMap.Current == map) RouteMap.Current = null;
+            finalized = false;
+            job = CreateRouteSteps(seed, players);
             jobDone = false;
             while (job.MoveNext()) { }
             jobDone = true;
             FinalizeRoute();
         }
 
-        IEnumerator<object> GenerateSteps(int seed, int players)
+        IEnumerator<object> CreateRouteSteps(int seed, int players)
         {
             jobSeed = seed;
             Seed = seed;
             Players = Mathf.Clamp(players, 1, 4);
             rng = new System.Random(seed);
             forks = 0;
+            forkFills.Clear();
             SectionStarts.Clear();
             SectionBiomes.Clear();
             rivers.Clear();
@@ -410,6 +432,8 @@ namespace JunkRace
 
             foreach (var p in map.Paths) p.SmoothForwards();
             foreach (var c in canyons) c.Fill();   // профиль ущелий — до декора: ему нужно знать, где низина
+            var railway = tutorial ? null : RouteRailway.Plan(root, map, toReverse, GroundY,
+                RailwayCrossingSite, seed, GameSession.Size);
             yield return null;
             foreach (var p in map.Paths) if (p.BuildMesh) { BuildRoadMesh(p); yield return null; }
             foreach (var f in forkFills) BuildForkFill(f.left, f.right);
@@ -419,9 +443,31 @@ namespace JunkRace
             var deco = DecorateSteps();
             while (deco.MoveNext()) yield return null;
             if (circuit) { CircuitRidge(); yield return null; }
-            BuildGround(firstDecoration);
+            if (railway != null)
+            {
+                for (int i = firstDecoration; i < root.childCount; i++)
+                {
+                    var decoration = root.GetChild(i);
+                    if (decoration.name.StartsWith("Мост", System.StringComparison.Ordinal)) continue;
+                    var renderers = decoration.GetComponentsInChildren<Renderer>(true);
+                    var bounds = new Bounds(decoration.position, decoration.localScale);
+                    if (renderers.Length > 0) bounds = renderers[0].bounds;
+                    foreach (var renderer in renderers) bounds.Encapsulate(renderer.bounds);
+                    if (railway.Obstructs(bounds)) decoration.gameObject.SetActive(false);
+                    if (i % 128 == 0) yield return null;
+                }
+            }
+            BuildGround(firstDecoration, railway);
             yield return null;
             if (circuit) FinishCircuit();
+            if (railway != null)
+            {
+                int layer = LayerMask.NameToLayer(TreeLayer);
+                if (layer >= 0) railway.gameObject.layer = layer;
+                var railwayBuild = railway.Build(map, GroundY);
+                while (railwayBuild.MoveNext()) yield return null;
+            }
+            RouteAirTraffic.Build(root, map, seed);
             root = null;
         }
 
@@ -432,17 +478,18 @@ namespace JunkRace
         {
             if (finalized || !jobDone) return;
             finalized = true;
+            StopRouteDriver();
+            job?.Dispose();
             job = null;
             if (tempRoot != null) { Destroy(tempRoot.gameObject); tempRoot = null; }   // шлагбаум и заглушка — прочь
-            root = routeRoot;
             int seed = jobSeed;
             var names = jobNames ?? new List<string>();
-            root.gameObject.SetActive(true);
+            routeRoot.gameObject.SetActive(true);
             ApplyPickedSun();
 
             // Веб (телефон в Telegram): склейка копирует меши всей трассы разом — пик памяти, на котором
             // браузер убивает страницу. Там обходимся без неё (URP и так группирует отрисовку через SRP Batcher).
-            if (Application.platform != RuntimePlatform.WebGLPlayer) StaticBatchingUtility.Combine(root.gameObject);
+            if (Application.platform != RuntimePlatform.WebGLPlayer) StaticBatchingUtility.Combine(routeRoot.gameObject);
             RouteMap.Current = map;
             ApplyCullDistances();
 
@@ -462,7 +509,6 @@ namespace JunkRace
                 ? $"Кольцо: {string.Join(" → ", names)} · круг ~{Mathf.RoundToInt(map.LapLength / 10f) * 10} м × {GameSession.Laps} · сид {seed}"
                 : $"Маршрут: {string.Join(" → ", names)} · развилок: {forks} · ~{Mathf.RoundToInt(routeLength / 10f) * 10} м · сид {seed}";
             Debug.Log("[JunkRace] " + Summary);
-            root = null;
         }
 
         // ============================ Длина гонки ============================
@@ -1182,10 +1228,31 @@ namespace JunkRace
         /// <summary>В низине: река с пляжем или ущелье — без деревьев, камней и гор (имя — историческое).</summary>
         bool InRiver(Vector3 p, float margin = 1f)
         {
-            // Вода и нижняя часть пляжа — без деревьев и кустов.
-            foreach (var r in rivers) if (r.HasX(p.x) && Mathf.Abs(p.z - r.CenterZ(p.x)) < r.HalfW + r.BankW * 0.5f + margin) return true;
+            if (NearRiver(p, margin)) return true;
             foreach (var c in canyons) if (c.Covers(p, margin)) return true;
             return false;
+        }
+
+        bool NearRiver(Vector3 p, float margin)
+        {
+            foreach (var r in rivers)
+                if (r.HasX(p.x) && Mathf.Abs(p.z - r.CenterZ(p.x)) < r.HalfW + r.BankW * 0.5f + margin)
+                    return true;
+            return false;
+        }
+
+        RouteRailway.CrossingSite RailwayCrossingSite(Vector3 p, float margin)
+        {
+            if (NearRiver(p, margin) || OnUnderpass(p, margin))
+                return RouteRailway.CrossingSite.Blocked;
+            foreach (var c in canyons)
+            {
+                if (!c.Covers(p, margin)) continue;
+                if (p.y >= GroundY - 0.1f && InsideTunnel(new Vector3(p.x, GroundY - TunnelRoof, p.z)))
+                    return RouteRailway.CrossingSite.AboveTunnel;
+                return RouteRailway.CrossingSite.Blocked;
+            }
+            return RouteRailway.CrossingSite.Surface;
         }
 
         /// <summary>Точка дороги под водой (брод): столбики и мусор там ни к чему.</summary>
@@ -2067,7 +2134,7 @@ namespace JunkRace
             tris.Add(i); tris.Add(i + 2); tris.Add(i + 3);
         }
 
-        void BuildGround(int firstDecoration)
+        void BuildGround(int firstDecoration, RouteRailway railway)
         {
             var b = new Bounds(transform.position, Vector3.zero);
             var flatAreas = new List<Bounds>();
@@ -2087,8 +2154,12 @@ namespace JunkRace
                 }
             }
             for (int i = firstDecoration; i < root.childCount; i++)
+            {
+                if (!root.GetChild(i).gameObject.activeSelf) continue;
                 foreach (var renderer in root.GetChild(i).GetComponentsInChildren<Renderer>())
                     flatAreas.Add(renderer.bounds);
+            }
+            if (railway != null) railway.ReserveGround(flatAreas);
 
             b.Expand(new Vector3(260f, 0f, 260f));
             if (!circuit) { GroundIn(b, rivers, canyons, flatAreas); return; }

@@ -4382,7 +4382,6 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents:
-    - {fileID: 4331774112325052386, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 1644879225943860862, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 5531921106188412310, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 6542910214140886986, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
@@ -9913,7 +9912,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 20.2125, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 2090945941}
@@ -15406,7 +15405,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -12.6625, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1252427430}
@@ -16006,7 +16005,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -27.762499, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1674771409}
@@ -26703,6 +26702,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 128491318}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &444368890
 Rigidbody:
@@ -31101,7 +31101,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 23.9875, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 979022464}
@@ -35967,6 +35967,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 1155415434}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &592819589
 Rigidbody:
@@ -36098,7 +36099,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -8.887501, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1278901215}
@@ -45377,7 +45378,6 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents:
-    - {fileID: 4331774112325052386, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 1644879225943860862, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 5531921106188412310, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 6542910214140886986, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
@@ -45820,6 +45820,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 1305193943}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &729384170
 Rigidbody:
@@ -46763,7 +46764,6 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents:
-    - {fileID: 4331774112325052386, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 1644879225943860862, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 5531921106188412310, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 6542910214140886986, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
@@ -50398,7 +50398,7 @@ Transform:
   m_GameObject: {fileID: 801202699}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.5, y: 0, z: 0.90000004}
+  m_LocalPosition: {x: -0.38, y: 0, z: 0.72}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -53664,7 +53664,7 @@ Transform:
   m_GameObject: {fileID: 857569138}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.5, y: 0, z: 0.90000004}
+  m_LocalPosition: {x: -0.38, y: 0, z: 0.72}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -54074,6 +54074,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 638606047}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &863354279
 Rigidbody:
@@ -57300,6 +57301,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 1007783476}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &912951135
 Rigidbody:
@@ -57473,6 +57475,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 616494772}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &913655258
 Rigidbody:
@@ -58617,6 +58620,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 1671828185}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &931280209
 Rigidbody:
@@ -62427,7 +62431,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 16.4375, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 586408829}
@@ -64751,7 +64755,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 8.8875, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 460428624}
@@ -65289,6 +65293,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 1077367742}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &1054959988
 Rigidbody:
@@ -70785,7 +70790,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 27.762499, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1483437703}
@@ -76576,7 +76581,6 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents:
-    - {fileID: 4331774112325052386, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 1644879225943860862, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 5531921106188412310, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 6542910214140886986, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
@@ -78684,7 +78688,6 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents:
-    - {fileID: 4331774112325052386, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 1644879225943860862, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 5531921106188412310, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 6542910214140886986, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
@@ -94252,6 +94255,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 1417911341}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &1505430204
 Rigidbody:
@@ -94646,6 +94650,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 1863542031}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &1512833100
 Rigidbody:
@@ -106093,8 +106098,8 @@ Transform:
   m_GameObject: {fileID: 1716595474}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 18.325, y: 1.2, z: -0.15}
-  m_LocalScale: {x: 22.65, y: 2.4, z: 0.3}
+  m_LocalPosition: {x: 18.325, y: 0.75, z: -0.15}
+  m_LocalScale: {x: 22.65, y: 1.5, z: 0.3}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 963949030}
@@ -108401,7 +108406,6 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents:
-    - {fileID: 4331774112325052386, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 1644879225943860862, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 5531921106188412310, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
     - {fileID: 6542910214140886986, guid: 8d768f6facec64d00a1eb521c3c5070c, type: 3}
@@ -109765,6 +109769,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 289346333}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &1770583370
 Rigidbody:
@@ -110471,7 +110476,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -20.2125, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 66195042}
@@ -110774,6 +110779,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 1376100218}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &1780639698
 Rigidbody:
@@ -115562,8 +115568,8 @@ Transform:
   m_GameObject: {fileID: 1855716936}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -18.325, y: 1.2, z: -0.15}
-  m_LocalScale: {x: 22.65, y: 2.4, z: 0.3}
+  m_LocalPosition: {x: -18.325, y: 0.75, z: -0.15}
+  m_LocalScale: {x: 22.65, y: 1.5, z: 0.3}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 963949030}
@@ -120482,6 +120488,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 169685349}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &1940006403
 Rigidbody:
@@ -124666,7 +124673,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 12.6625, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1251071059}
@@ -126466,7 +126473,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -23.9875, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 2141602387}
@@ -128578,6 +128585,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 1415367446}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &2100816868
 Rigidbody:
@@ -130111,6 +130119,7 @@ MonoBehaviour:
   rollingResistance: 3
   paddle: 0.5
   visual: {fileID: 2022185214}
+  faceOutward: 1
   modelHalfWidth: 0.27641913
 --- !u!54 &2122127568
 Rigidbody:
@@ -131082,7 +131091,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -16.4375, y: 0, z: -0.15}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 1, y: 0.625, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 881047222}

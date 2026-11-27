@@ -31,6 +31,8 @@ namespace JunkRace
         [SerializeField] float paddle = 0.5f;
 
         [SerializeField] Transform visual;
+        [Tooltip("Разворачивать модель с лицевой стороной +X наружу на обоих бортах.")]
+        [SerializeField] bool faceOutward;
 
         /// <summary>Точка колеса стоит на столько снаружи борта (см. AddHullPoints). Тонкие колёса прижимаем к борту.</summary>
         const float MountOutset = 0.25f;
@@ -61,6 +63,17 @@ namespace JunkRace
             else if (visual != null) halfWidth = MeasureHalfWidth();   // пока шина стоит прямо
         }
 
+        public override Quaternion MountRotation(AttachPoint point)
+        {
+            if (!faceOutward || point == null || point.Slot != SlotType.Wheel || point.Owner == null)
+                return Quaternion.identity;
+
+            var hull = point.Owner.transform;
+            float side = hull.InverseTransformPoint(point.transform.position).x;
+            float heading = Vector3.Dot(point.transform.right, hull.right);
+            return side * heading < -0.01f ? Quaternion.Euler(0f, 180f, 0f) : Quaternion.identity;
+        }
+
         public override void OnDetached()
         {
             base.OnDetached();
@@ -73,7 +86,10 @@ namespace JunkRace
         protected override void LateUpdate()
         {
             if (visual == null) return;
-            visual.localRotation = Quaternion.Euler(0f, wheelSteerAngle, 0f) * Quaternion.Euler(wheelSpin, 0f, 0f);
+            float spin = wheelSpin;
+            if (faceOutward && Vehicle != null && Slot == SlotType.Wheel && Vector3.Dot(transform.right, Vehicle.transform.right) < 0f)
+                spin = -spin;
+            visual.localRotation = Quaternion.Euler(0f, wheelSteerAngle, 0f) * Quaternion.Euler(spin, 0f, 0f);
 
             // Шина опускается до земли: подвеска — это ход колеса, а не воздух под ним.
             // Считаем прямо тут (и на клиенте тоже), коллайдер детали при этом не двигается.

@@ -215,8 +215,8 @@ namespace JunkRace.EditorTools
                 YardFence(yard, fenceModel, new Vector3(half + 0.15f, 0f, 0f), new Vector3(half + 0.15f, 0f, TrackStart));
                 YardFence(yard, fenceModel, new Vector3(half + 0.15f, 0f, TrackStart - 0.15f), new Vector3(-half - 0.15f, 0f, TrackStart - 0.15f));
                 // Сужение к выезду: трасса начинается шириной 14 м.
-                YardFence(yard, fenceModel, new Vector3(-half - 0.15f, 0f, -0.15f), new Vector3(-7f, 0f, -0.15f));
-                YardFence(yard, fenceModel, new Vector3(7f, 0f, -0.15f), new Vector3(half + 0.15f, 0f, -0.15f));
+                YardFence(yard, fenceModel, new Vector3(-half - 0.15f, 0f, -0.15f), new Vector3(-7f, 0f, -0.15f), ExitFenceHeight);
+                YardFence(yard, fenceModel, new Vector3(7f, 0f, -0.15f), new Vector3(half + 0.15f, 0f, -0.15f), ExitFenceHeight);
             }
             else
             {
@@ -288,22 +288,22 @@ namespace JunkRace.EditorTools
             SetObjects(gen, "boomModels", RouteTemplates(box, "Gate", up, new Vector3(1f, 1f, 0.5f), false, "boom"));
         }
 
-        const float FenceHeight = 2.4f, FenceStep = 4f;
+        const float FenceHeight = 2.4f, ExitFenceHeight = 1.5f, FenceStep = 4f;
 
         /// <summary>
         /// Забор свалки от a до b: невидимая плита-коллайдер во всю длину и секции модели по ~4 м
         /// (целое число, растянуты ровно на длину). Лицом наружу не важно — модель с двух сторон одинаковая.
         /// </summary>
-        static void YardFence(Transform parent, GameObject model, Vector3 a, Vector3 b)
+        static void YardFence(Transform parent, GameObject model, Vector3 a, Vector3 b, float height = FenceHeight)
         {
             Vector3 dir = b - a;
             float len = dir.magnitude;
             if (len < 0.5f) return;
             dir /= len;
             var rot = Quaternion.LookRotation(Vector3.Cross(dir, Vector3.up), Vector3.up);   // X модели — вдоль забора
-            var wall = Box("Забор_коллайдер", parent, (a + b) / 2f + Vector3.up * FenceHeight / 2f, Vector3.one, Color.white);
+            var wall = Box("Забор_коллайдер", parent, (a + b) / 2f + Vector3.up * height / 2f, Vector3.one, Color.white);
             wall.transform.rotation = rot;
-            wall.transform.localScale = new Vector3(len, FenceHeight, 0.3f);
+            wall.transform.localScale = new Vector3(len, height, 0.3f);
             Object.DestroyImmediate(wall.GetComponent<MeshRenderer>());
             Object.DestroyImmediate(wall.GetComponent<MeshFilter>());
             wall.isStatic = true;
@@ -316,7 +316,7 @@ namespace JunkRace.EditorTools
                 t.SetParent(parent, false);
                 t.SetPositionAndRotation(a + dir * (seg * (i + 0.5f)), rot);
                 // Чуть внахлёст — без щелей между секциями.
-                ModelFitter.Attach(model, t, new Vector3(0f, FenceHeight / 2f, 0f), new Vector3(seg * 1.04f, FenceHeight, 0.35f), false);
+                ModelFitter.Attach(model, t, new Vector3(0f, height / 2f, 0f), new Vector3(seg * 1.04f, height, 0.35f), false);
                 foreach (var tr in t.GetComponentsInChildren<Transform>(true)) tr.gameObject.isStatic = true;
             }
         }
@@ -655,7 +655,7 @@ namespace JunkRace.EditorTools
             Color rubber = new Color(0.15f, 0.15f, 0.15f);
             Scaled(yard, new[] { 2, 3, 4, 5 }, () =>
                 MakeWheel(yard, "Колесо квадроцикла", "Держит дорогу. Почти.", 11f, 0.45f, 900f, 750f, new Color(0.35f, 0.25f, 0.15f),
-                          model: "wheel-tractor-dark-back", visualYaw: 180f));
+                          model: "wheel-tractor-dark-back", visualYaw: 180f, faceOutward: true));
             Scaled(yard, new[] { 2, 2, 3, 4 }, () =>
                 MakeWheel(yard, "Колесо", "Обычное, от чего-то маленького. Скучное, зато катится и держит.", 7f, 0.38f, 650f, 600f, rubber, model: "wheel"));
             Scaled(yard, new[] { 2, 2, 3, 4 }, () =>
@@ -1216,7 +1216,8 @@ namespace JunkRace.EditorTools
                 for (int sz = -1; sz <= 1; sz += 2)
                     Prim(PrimitiveType.Cube, "Ножка", t, new Vector3(sx * (w / 2f - 0.08f), legH / 2f, sz * (l / 2f - 0.08f)),
                          new Vector3(0.08f, legH, 0.08f), wood * 0.85f);
-            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f));
+            MakeVehicle(p, AddHullPoints(t, w, l, floorY: 0f, topY: 0.4f,
+                                         steeringPosition: new Vector3(-0.38f, 0f, 0.72f)));
             // Модель стола обычно стоит на ножках — переворачиваем: у нас он вверх ногами.
             DressHull(p, "table", new Vector3(0f, (legH - 0.06f) / 2f, 0f), new Vector3(w, legH + 0.06f, l), Quaternion.Euler(180f, 0f, 0f));
             // Ножками вниз: столешница на месте, колёса опускаются ниже ножек.
@@ -1321,7 +1322,7 @@ namespace JunkRace.EditorTools
         /// </summary>
         /// <returns>Место водителя (центр капсулы игрока) — для MakeVehicle.</returns>
         static Vector3 AddHullPoints(Transform hull, float width, float length, float floorY, float topY,
-                                     float wheelY = 0f, bool wheelsUnder = false, int wheelPairs = 3, int engines = 2)
+                                     float wheelY = 0f, bool wheelsUnder = false, int wheelPairs = 3, int engines = 2, Vector3? steeringPosition = null)
         {
             // Салон. Широкий корпус — как обычная машина: водитель слева впереди, руль перед ним,
             // справа пассажир, сзади ещё двое. Узкий (шкаф, тележка) — водитель по центру, рядом никто не влезет.
@@ -1347,7 +1348,7 @@ namespace JunkRace.EditorTools
             Point(hull, "Колесо_ЗП", new Vector3(x, wheelY, -z), SlotType.Wheel);
 
             // Руль — прямо перед водителем, а под водителем — место для водительского кресла.
-            Point(hull, "Руль", new Vector3(driverX, floorY, steeringZ), SlotType.Steering);
+            Point(hull, "Руль", steeringPosition ?? new Vector3(driverX, floorY, steeringZ), SlotType.Steering);
             Set(Point(hull, "Водитель", new Vector3(driverX, floorY, driverZ), SlotType.Seat), "driver", true);
 
             // Моторы в самом хвосте — чтобы не залезали в кресла салона.
@@ -1422,7 +1423,7 @@ namespace JunkRace.EditorTools
         static WheelPart MakeWheel(Transform parent, string name, string description, float mass, float radius,
                                    float traction, float grip, Color color, WheelStyle style = WheelStyle.Tire,
                                    float thickness = 0.12f, float breakImpulse = 600f, float rolling = 3f,
-                                   float buoyancy = 0f, float paddle = 0.5f, string model = null, float visualYaw = 0f)
+                                   float buoyancy = 0f, float paddle = 0.5f, string model = null, float visualYaw = 0f, bool faceOutward = false)
         {
             var p = MakePart<WheelPart>(name, PartCategory.Drive, parent, RandomYardPos(), mass, breakImpulse, buoyancy, description);
             // Коллайдер в форме шины (плоский цилиндр): свободное колесо катится как колесо, а не как мяч.
@@ -1510,6 +1511,7 @@ namespace JunkRace.EditorTools
             Set(p, "grip", grip);
             Set(p, "rollingResistance", rolling);
             Set(p, "paddle", paddle);
+            Set(p, "faceOutward", faceOutward);
             Set(p, "visual", pivot);
             return p;
         }
