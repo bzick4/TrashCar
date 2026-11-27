@@ -129,7 +129,8 @@ namespace JunkRace
             }
             // На широких кольцах более короткий поперечный участок остаётся между ветками
             // и не цепляет вторую сторону трассы той же дугой.
-            float[] reaches = map.Circuit ? new[] { 104f, 82f, 68f, 56f } : new[] { 104f };
+            // На спринте короткие поперечные участки соединяются длинными продольными дугами.
+            float[] reaches = map.Circuit ? new[] { 104f, 82f, 68f, 56f } : new[] { 56f, 48f, 42f };
             foreach (float reach in reaches)
             {
                 if (!TryFlatConnectors(map, spine, road, crossingSite, ground, target, bestCrossings.Count, reach)) continue;
@@ -144,7 +145,11 @@ namespace JunkRace
                 bestCrossings.AddRange(crossings);
                 bestLoop = loop;
             }
-            if (best.Count == 0) LayOutsideRoad(map, ground);
+            if (best.Count == 0)
+            {
+                if (!map.Circuit) LayRoadside(map, road, ground);
+                if (map.Circuit || !IsTrackClear(road)) LayOutsideRoad(map, ground);
+            }
             else
             {
                 ResetLayout();
@@ -181,9 +186,12 @@ namespace JunkRace
             }
 
             candidates.Sort((a, b) => a.Pos.z.CompareTo(b.Pos.z));
-            for (int length = Mathf.Min(target, candidates.Count); length > existing; length--)
+            int minimum = map.Circuit ? 1 : 2;
+            int widest = map.Circuit ? 140 : 215;
+            int tightest = map.Circuit ? 65 : 140;
+            for (int length = Mathf.Min(target, candidates.Count); length >= minimum && length > existing; length--)
             {
-                for (int spacing = 140; spacing >= 65; spacing -= 15)
+                for (int spacing = widest; spacing >= tightest; spacing -= 15)
                 {
                     var selected = new List<RouteSample>();
                     int cursor = 0;
@@ -213,6 +221,7 @@ namespace JunkRace
                             crossings.Add(site);
                             heading = -heading;
                         }
+                        if (!map.Circuit && rail.Last.Pos.z - rail.Samples[0].Pos.z < rail.Length * 0.6f) continue;
                         if (!IsTrackClear(road)) continue;
                         secondEntryLimit = Mathf.Min(54f, reach - 38f);
                         return true;
@@ -516,6 +525,60 @@ namespace JunkRace
             float t = Cross(c - a, across) / denominator;
             float u = Cross(c - a, along) / denominator;
             return t > 0.001f && t < 0.999f && u > 0.001f && u < 0.999f;
+        }
+
+        void LayRoadside(RouteMap map, Dictionary<int, List<RoadStrip>> road, float ground)
+        {
+            ResetLayout();
+            loop = false;
+            const float step = 6f;
+            const int radius = 6;
+            float startZ = map.Start.Pos.z - YardApproachBack;
+            float endZ = map.Start.Pos.z + 200f;
+            foreach (var path in map.Paths)
+                if (path.BuildMesh)
+                    foreach (var sample in path.Samples)
+                        endZ = Mathf.Max(endZ, sample.Pos.z + 55f);
+
+            int count = Mathf.CeilToInt((endZ - startZ) / step) + 1;
+            var edge = new float[count];
+            var envelope = new float[count];
+            float left = map.Start.Pos.x - YardApproachSide;
+            for (int i = 0; i < count; i++)
+            {
+                float z = startZ + i * step;
+                int cell = Mathf.FloorToInt(z / RoadBucketSize);
+                if (road.TryGetValue(cell, out var strips))
+                {
+                    left = float.PositiveInfinity;
+                    foreach (var strip in strips)
+                        left = Mathf.Min(left, Mathf.Min(strip.A.Pos.x - strip.A.HalfWidth, strip.B.Pos.x - strip.B.HalfWidth));
+                    left -= 17f;
+                }
+                if (z < map.Start.Pos.z + YardClearance) left = Mathf.Min(left, map.Start.Pos.x - 50f);
+                edge[i] = left;
+            }
+
+            // Огибающая остаётся снаружи обочины даже после сглаживания.
+            for (int i = 0; i < count; i++)
+            {
+                envelope[i] = edge[i];
+                for (int j = Mathf.Max(0, i - radius); j <= Mathf.Min(count - 1, i + radius); j++)
+                    envelope[i] = Mathf.Min(envelope[i], edge[j]);
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                float x = 0f;
+                for (int offset = -radius; offset <= radius; offset++)
+                    x += envelope[Mathf.Clamp(i + offset, 0, count - 1)];
+                rail.Add(new RouteSample
+                {
+                    Pos = new Vector3(x / (radius * 2 + 1), ground + RailSurfaceOffset, startZ + i * step),
+                    Forward = Vector3.forward
+                });
+            }
+            rail.SmoothForwards();
         }
 
         void LayOutsideRoad(RouteMap map, float ground)

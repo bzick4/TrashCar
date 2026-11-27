@@ -207,7 +207,7 @@ namespace JunkRace
             // Пролёт — локальный эффект: в коопе игроки могут быть на разных участках.
             var driver = World.Local?.Driving;
             var observer = driver != null ? driver.transform : World.Local?.HoldPoint;
-            if (observer == null || raceElapsed < 0f)
+            if (observer == null || raceElapsed < 0f || InTunnel(observer.position))
             {
                 flybyActive = false;
                 nextFlybyCheck = 0f;
@@ -215,7 +215,8 @@ namespace JunkRace
             else if (raceElapsed >= nextFlybyCheck)
             {
                 nextFlybyCheck = raceElapsed + 0.2f;
-                bool onRoad = routeMap.Nearest(observer.position, true, out var hit) && hit.Path.BuildMesh;
+                bool onRoad = routeMap.Nearest(observer.position, true, out var hit)
+                    && hit.Path.BuildMesh && !InTunnel(hit.Sample.Pos);
                 float progress = onRoad ? FlybyProgress(routeMap, hit) : -1f;
                 if (progress < 0.2f || progress > 0.8f) flybyActive = false;
                 else if (raceElapsed - flybyStart >= LowPeriod)
@@ -249,12 +250,22 @@ namespace JunkRace
             float speed = driver != null ? Mathf.Clamp(driver.ForwardSpeed, 0f, 40f) : 0f;
             var target = hit.Path.At(hit.Along + speed * secondsToPass * sign);
             if (!target.Road) target = hit.Sample;
+            if (InTunnel(target.Pos))
+            {
+                flybyActive = false;
+                return;
+            }
             var forward = Vector3.ProjectOnPlane(target.Forward * sign, Vector3.up);
             if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
             var heading = forward.normalized * (flybyHeadOn ? -1f : 1f);
-            flybyCenter = Vector3.Lerp(flybyCenter, target.Pos + Vector3.up * FlybyHeight, blend);
+            var center = target.Pos;
+            center.y = Mathf.Max(center.y, routeMap.Start.Pos.y) + FlybyHeight;
+            flybyCenter = Vector3.Lerp(flybyCenter, center, blend);
             flybyHeading = blend >= 1f ? heading : Vector3.Slerp(flybyHeading, heading, blend);
         }
+
+        static bool InTunnel(Vector3 position) =>
+            RouteGenerator.Instance != null && RouteGenerator.Instance.InsideTunnel(position);
 
         static float FlybyProgress(RouteMap map, RouteMap.Hit hit)
         {

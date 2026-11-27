@@ -1572,7 +1572,8 @@ namespace JunkRace.EditorTools
             body.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
             Set(p, "thrust", 2500f);
             Set(p, "useSpecialButton", true);
-            DressPart(p, SpecialFolder, "VacuumReplacement", Vector3.zero, new Vector3(0.5f, 0.5f, 1f), Quaternion.Euler(90f, 0f, 0f));
+            DressPart(p, SpecialFolder, "VacuumReplacement", Vector3.zero, new Vector3(0.5f, 0.5f, 1f),
+                      Quaternion.Euler(0f, 0f, 180f) * Quaternion.Euler(90f, 0f, 0f));
         }
 
         enum SteerStyle { Wheel, Laptop }

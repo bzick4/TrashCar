@@ -128207,14 +128207,14 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 253697780}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0.00000023841858, y: 0.00000011920929, z: -0.49980164}
+  m_LocalRotation: {x: 0, y: 0.7071068, z: 0.7071068, w: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -0.49980164}
   m_LocalScale: {x: 0.25831163, y: 0.18447691, z: 0.24427398}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 321908261}
   m_Father: {fileID: 335533936}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 90, y: 180, z: 0}
 --- !u!1001 &283535493
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -128631,14 +128631,14 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 444794185}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
+  m_LocalRotation: {x: 0, y: 0.7071068, z: 0.7071068, w: 0}
   m_LocalPosition: {x: 0, y: 0, z: -0.49980068}
   m_LocalScale: {x: 0.2583117, y: 0.18447685, z: 0.24427398}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1075549948}
   m_Father: {fileID: 848360660}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 90, y: 180, z: 0}
 --- !u!1001 &449087862
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -128827,14 +128827,14 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 563976531}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 0.00000011920929, z: -0.49980164}
+  m_LocalRotation: {x: 0, y: 0.7071068, z: 0.7071068, w: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -0.49980164}
   m_LocalScale: {x: 0.2583117, y: 0.18447691, z: 0.24427398}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1567246031}
   m_Father: {fileID: 180226260}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 90, y: 180, z: 0}
 --- !u!1 &572475190
 GameObject:
   m_ObjectHideFlags: 0
@@ -129098,14 +129098,14 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 855209927}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 0.000000059604645, z: -0.49980068}
+  m_LocalRotation: {x: 0, y: 0.7071068, z: 0.7071068, w: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -0.49980068}
   m_LocalScale: {x: 0.2583117, y: 0.18447687, z: 0.24427398}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1026169499}
   m_Father: {fileID: 1022501117}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 90, y: 180, z: 0}
 --- !u!1 &874479973
 GameObject:
   m_ObjectHideFlags: 0
@@ -129273,14 +129273,14 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 888041532}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 0.000000059604645, z: -0.49980116}
+  m_LocalRotation: {x: 0, y: 0.7071068, z: 0.7071068, w: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -0.49980116}
   m_LocalScale: {x: 0.2583117, y: 0.18447688, z: 0.24427398}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1572091904}
   m_Father: {fileID: 90375506}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 90, y: 180, z: 0}
 --- !u!21 &894323790
 Material:
   serializedVersion: 8
@@ -130734,14 +130734,14 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1604201465}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 0.000000059604645, z: -0.49980116}
+  m_LocalRotation: {x: 0, y: 0.7071068, z: 0.7071068, w: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -0.49980116}
   m_LocalScale: {x: 0.2583117, y: 0.18447688, z: 0.24427398}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 839719401}
   m_Father: {fileID: 1447044790}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 90, y: 180, z: 0}
 --- !u!1001 &1608957644
 PrefabInstance:
   m_ObjectHideFlags: 0
